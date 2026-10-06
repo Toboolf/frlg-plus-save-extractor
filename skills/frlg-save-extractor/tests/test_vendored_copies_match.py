@@ -8,8 +8,10 @@ so the repo holds the same module more than once on purpose. If someone edits a
 copy instead of the original, the reader and the writer stop agreeing about the
 save format — which is the one failure this repo's structure exists to prevent.
 
-Inside an installed .skill there is no repo above the package, so this test
-reports that it has nothing to compare and passes.
+The source repo is recognised by a shared/ directory two levels above the
+package. If shared/ is there, a missing or malformed VENDORED block in build.sh
+is a failure. Inside an installed .skill there is no shared/ above the package,
+so this test reports that it has nothing to compare and passes.
 """
 import os
 import re
@@ -40,18 +42,18 @@ def vendored_map(build_sh):
 
 def main():
     build_sh = os.path.join(REPO, "build.sh")
-    pairs = None
-    in_source_repo = False
-    if os.path.isdir(os.path.join(REPO, "shared")) and os.path.isfile(build_sh):
-        with open(build_sh, encoding="utf-8") as f:
-            in_source_repo = "VENDORED=(" in f.read()
-    if not in_source_repo:
+    if not os.path.isdir(os.path.join(REPO, "shared")):
         print("standalone install: no shared/ to compare against — nothing to check")
         return 0
-    pairs = vendored_map(build_sh)
-    if pairs is None:
-        FAILS.append("build.sh has no VENDORED=( ... ) block for this test to read")
-        pairs = []
+    # shared/ exists, so this is the source repo: from here a broken build.sh is a failure.
+    pairs = []
+    if not os.path.isfile(build_sh):
+        FAILS.append("shared/ exists but build.sh is missing, so the vendoring map cannot be read")
+    else:
+        pairs = vendored_map(build_sh)
+        if pairs is None:
+            FAILS.append("build.sh has no VENDORED=( ... ) block for this test to read")
+            pairs = []
     checked = 0
     for src, dst in pairs:
         origin = os.path.join(REPO, src)
