@@ -28,14 +28,14 @@ it changes.
 
 Each skill's own `SKILL.md` states what that skill does to your save. Nothing
 in this repo writes to a save file without making a timestamped backup first
-and verifying every sector checksum before and after.
+and checking the checksums of the sectors it recognises before and after.
 
 ### What `extras/fix_boxed_hp.py` does when it writes
 
 - **Dry run by default.** It prints what it would change and writes nothing unless you pass `--apply`.
-- **Checks first.** It reproduces all 28 sector checksums (2 slots x 14 sectors) and refuses to touch the save if any do not match.
+- **Checks first.** It reproduces the checksum of every recognisable sector (one with a valid signature and a known section id, across both slots, up to 28) and refuses to continue if any of those disagree. A sector with no valid signature or an unknown id is skipped rather than treated as a failure, so a slot that was never written does not block a save. Separately, it only writes to a slot that passes its own integrity check: all 14 sections present exactly once, each with a valid signature and checksum, and one consistent save counter.
 - **Backs up, then writes.** Immediately before writing it copies the save to `<save>.bak-<timestamp>`.
-- **Checks afterwards.** It re-verifies all 28 checksums on the bytes it wrote and exits with an error if any no longer match.
+- **Checks afterwards.** It re-runs the same check on the bytes it wrote and exits with an error if any no longer match.
 - **Active slot only.** Only the more recent valid save slot is modified; the other slot is left as a rollback point.
 
 ## Install
