@@ -97,9 +97,13 @@ def matches_vanilla(consts, names):
     """True if a header revision numbers every vanilla section as vanilla does.
 
     MAPSEC_NONE and MAPSEC_COUNT follow the real sections and are the only names
-    a revision may carry beyond the vanilla list.
+    a revision may carry beyond the vanilla list. MAPSEC_NONE is the one value the
+    json does not list, so it is pinned to the section count (it follows the last
+    real section) and must be present: a revision with another value is rejected.
     """
     if any(consts.get(n) != i for i, n in enumerate(names)):
+        return False
+    if consts.get("MAPSEC_NONE") != len(names):
         return False
     return set(consts) - set(names) <= {"MAPSEC_NONE", "MAPSEC_COUNT"}
 

@@ -59,6 +59,9 @@ def test_pallet_town_does_not_move():
 def test_remap_is_a_function_not_a_collision():
     for kind in ("maps", "layouts", "mapsec"):
         targets = list(R[kind].values())
+        rows = vanilla_frlg.remap_rows(DATA_DIR, f"remap_{kind}.txt")
+        check(len(R[kind]) == len(rows),
+              f"{kind} remap has rows sharing a vanilla value, so the dict collapsed them")
         check(len(targets) == len(set(targets)),
               f"{kind} remap sends two vanilla values to the same FRLG+ value")
 
@@ -69,7 +72,7 @@ def test_mapsec_kanto_is_stable_and_none_moves():
     v, f = rows["MAPSEC_PALLET_TOWN"]
     check(v == f, f"MAPSEC_PALLET_TOWN should not move, got {v:#x} -> {f:#x}")
     v, f = rows["MAPSEC_NONE"]
-    check(v != f, f"MAPSEC_NONE should move, got {v:#x} -> {f:#x}")
+    check((v, f) == (0xC5, 0xD5), f"MAPSEC_NONE should be 0xC5 -> 0xD5, got {v:#x} -> {f:#x}")
 
 
 def test_generator_writes_beside_the_vanilla_layout():
@@ -86,6 +89,10 @@ def test_matches_vanilla_accepts_only_agreeing_revisions():
     check(not generate_remaps.matches_vanilla(renamed, names), "a renamed section was accepted")
     shifted = {"MAPSEC_A": 1, "MAPSEC_B": 0}
     check(not generate_remaps.matches_vanilla(shifted, names), "a shifted value was accepted")
+    wrong_none = {"MAPSEC_A": 0, "MAPSEC_B": 1, "MAPSEC_NONE": 3}
+    check(not generate_remaps.matches_vanilla(wrong_none, names), "a wrong MAPSEC_NONE was accepted")
+    no_none = {"MAPSEC_A": 0, "MAPSEC_B": 1}
+    check(not generate_remaps.matches_vanilla(no_none, names), "a revision without MAPSEC_NONE was accepted")
     extra = {"MAPSEC_A": 0, "MAPSEC_B": 1, "MAPSEC_HOENN": 2}
     check(not generate_remaps.matches_vanilla(extra, names), "an extra section was accepted")
 
@@ -113,6 +120,10 @@ def test_layout_ids_count_empty_slots():
     rows = {name: (v, f) for v, f, name in vanilla_frlg.remap_rows(DATA_DIR, "remap_layouts.txt")}
     check(rows.get("LAYOUT_BATTLE_COLOSSEUM_2P") == (47, 36),
           f"LAYOUT_BATTLE_COLOSSEUM_2P should be 47 -> 36, got {rows.get('LAYOUT_BATTLE_COLOSSEUM_2P')}")
+    # A second pin far down the list, past the last of the 18 empties: all 18 have
+    # been counted by here, so 342 - 324 == 18. A late placeholder shifts this.
+    check(rows.get("LAYOUT_BIRTH_ISLAND_EXTERIOR") == (342, 324),
+          f"LAYOUT_BIRTH_ISLAND_EXTERIOR should be 342 -> 324, got {rows.get('LAYOUT_BIRTH_ISLAND_EXTERIOR')}")
     # One assertion that tells the two rules apart: with empties skipped the highest
     # vanilla id could not exceed the number of named layouts.
     highest = max(v for v, _ in rows.values())
