@@ -29,7 +29,11 @@ it changes.
 | | reads a save | writes a save |
 |---|---|---|
 | `skills/frlg-save-extractor/` | yes | never |
+| `shared/` (the Gen 3 core, the FRLG+ and vanilla profiles, the table generator) | library code that the skill carries as generated copies and `extras/` imports from them; it never touches a save on its own | no |
 | `extras/fix_boxed_hp.py` | yes | yes, with a backup and a dry run by default |
+
+`shared/` is the original source of that code; `./build.sh` copies it into the skill package
+(`skills/frlg-save-extractor/`), so the skill's copies are generated and are not edited by hand.
 
 Each skill's own `SKILL.md` states what that skill does to your save. Nothing
 in this repo writes to a save file without making a timestamped backup first
@@ -72,7 +76,7 @@ which is the honest default.
 ## How it knows the save layout
 
 Every offset and name table the extractor uses is generated from the FRLG+ source itself by
-`tools/generate_tables.py`. The generator refuses to emit a layout unless its walk lands
+`shared/tools/generate_tables.py`. The generator refuses to emit a layout unless its walk lands
 exactly on the next field the source annotates — it does not guess at padding or gaps.
 
 Two cross-checks in the extractor make the resulting report trustworthy rather than merely
@@ -86,9 +90,14 @@ If FRLG+ updates and the generated tables fall behind:
 
 ```bash
 git clone https://github.com/Deokishisu/FRLG-Plus ../FRLG-Plus
-python3 skills/frlg-save-extractor/tools/generate_tables.py --repo ../FRLG-Plus
+python3 shared/tools/generate_tables.py --repo ../FRLG-Plus
+./build.sh
 python3 skills/frlg-save-extractor/tests/run_all.py
 ```
+
+Run the generator from `shared/tools/`, not from the skill's copy: `shared/` is the original
+and the skill copies are generated, so an edit made to the copy is overwritten by the next
+`./build.sh`.
 
 ## Running the tests
 
@@ -96,9 +105,13 @@ python3 skills/frlg-save-extractor/tests/run_all.py
 python3 skills/frlg-save-extractor/tests/run_all.py
 ```
 
+The same suite runs from the repo checkout and, after `./build.sh`, from the unzipped
+`.skill` archive (`frlg-save-extractor/tests/run_all.py`). After editing `shared/`, run
+`./build.sh` and then the suite from the repo.
+
 ## Provenance and credits
 
-The save-layout and name tables under `skills/frlg-save-extractor/scripts/data/` are
+The save-layout and name tables under `skills/frlg-save-extractor/scripts/data/` (the skill's `scripts/data/`) are
 machine-generated from [Deokishisu/FRLG-Plus](https://github.com/Deokishisu/FRLG-Plus), the
 ROM hack, itself based on [pret/pokefirered](https://github.com/pret/pokefirered), the
 decompilation it is built on. They exist so a save file produced by that hack can be read —
@@ -111,4 +124,4 @@ about FRLG+ itself belong on
 ## Licence
 
 The code in this repository is MIT licensed — see [`LICENSE`](LICENSE), which also notes
-that the generated tables under `scripts/data/` are covered separately.
+that the generated tables under `skills/frlg-save-extractor/scripts/data/` are covered separately.
