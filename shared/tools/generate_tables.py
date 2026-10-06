@@ -565,6 +565,7 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["daycare_mon_size"] = daycare_mon_size
     layout["daycare_mon_count"] = consts["DAYCARE_MON_COUNT"]
     layout["sb1_daycare_offspring"] = daycare + 2 * daycare_mon_size
+    layout["daycare_offspring_width"] = offspring_size
     layout["sb1_daycare_step_counter"] = daycare + 2 * daycare_mon_size + offspring_size
     layout["sb1_roamer"] = annotated("roamer")
     layout["roamer_size"] = annotated("enigmaBerry") - annotated("roamer")

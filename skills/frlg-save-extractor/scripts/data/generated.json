@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06 08:56 UTC",
+ "generated_at": "2026-10-06 08:58 UTC",
  "repo_name": "FRLG-Plus",
  "repo_commit": "f198fb944",
  "rows": {
@@ -16,7 +16,7 @@
   "extended_dex": 246,
   "encounters": 2053,
   "key_item_indices": 59,
-  "save_layout": 79
+  "save_layout": 80
  },
  "save_layout": {
   "sb1_money": "0x290",
@@ -52,6 +52,7 @@
   "daycare_mon_size": "0x8C",
   "daycare_mon_count": "0x2",
   "sb1_daycare_offspring": "0x3094",
+  "daycare_offspring_width": "0x4",
   "sb1_daycare_step_counter": "0x3098",
   "sb1_roamer": "0x30D0",
   "roamer_size": "0x1C",

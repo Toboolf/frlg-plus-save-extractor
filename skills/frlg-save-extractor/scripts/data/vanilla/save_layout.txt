@@ -30,6 +30,7 @@ sb1_daycare|12160|0x2F80
 daycare_mon_size|140|0x8C
 daycare_mon_count|2|0x2
 sb1_daycare_offspring|12440|0x3098
+daycare_offspring_width|2|0x2
 sb1_daycare_step_counter|12442|0x309A
 sb1_roamer|12496|0x30D0
 roamer_size|28|0x1C

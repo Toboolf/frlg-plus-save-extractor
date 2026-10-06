@@ -50,6 +50,22 @@ def test_vanilla_daycare_is_four_bytes_later_than_frlgplus():
     check(F["sb1_daycare"] == 0x2F7C, f"FRLG+ daycare at {F.get('sb1_daycare')}")
 
 
+def test_daycare_offspring_width_pins_the_geometry():
+    """offspringPersonality is u16 in vanilla, u32 in FRLG+; that width is what
+    places the step counter and the end of the struct."""
+    check(V.get("daycare_offspring_width") == 2, f"vanilla width {V.get('daycare_offspring_width')}")
+    check(F.get("daycare_offspring_width") == 4, f"FRLG+ width {F.get('daycare_offspring_width')}")
+    check(V["sb1_daycare_step_counter"] == 0x309A, f"vanilla step counter {V['sb1_daycare_step_counter']:#x}")
+    check(F["sb1_daycare_step_counter"] == 0x3098, f"FRLG+ step counter {F['sb1_daycare_step_counter']:#x}")
+    for name, L in (("vanilla", V), ("FRLG+", F)):
+        check(L["sb1_daycare_step_counter"] == L["sb1_daycare_offspring"] + L["daycare_offspring_width"],
+              f"{name} step counter is not offspring + width")
+    # struct end (offspring + width + u8 step counter, padded to 4) is giftRibbons in vanilla
+    end = V["sb1_daycare_step_counter"] + 1
+    end += -end % 4
+    check(end == 0x309C, f"vanilla Day Care ends at {end:#x}, want giftRibbons 0x309C")
+
+
 def test_items_count_differs():
     """FRLG+ appends two items to vanilla's 375, so this one key really differs."""
     check(V["items_count"] == 375, f"vanilla items_count {V.get('items_count')}")
@@ -57,7 +73,7 @@ def test_items_count_differs():
 
 
 def test_shared_offsets_really_are_shared():
-    """Every key both layouts define, except the bag, the daycare and items_count,
+    """Every key both layouts define, except the bag, the daycare (with its offspring width) and items_count,
     must agree.
 
     Written as "whatever both tables have" rather than a hand-listed set, so a
@@ -65,7 +81,7 @@ def test_shared_offsets_really_are_shared():
     here because it is asserted to differ in test_items_count_differs.
     """
     differs = {"sb1_daycare", "sb1_daycare_offspring", "sb1_daycare_step_counter",
-               "items_count"}
+               "items_count", "daycare_offspring_width"}
     for k in sorted(set(V) & set(F)):
         if k.startswith("sb1_bag") or k.startswith("bag_") or k in differs:
             continue
