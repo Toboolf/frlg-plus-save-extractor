@@ -24,7 +24,7 @@ import plan as planmod  # noqa: E402
 import savewrite  # noqa: E402
 import vanilla_frlg  # noqa: E402
 from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
-from vanilla_read import read_vanilla  # noqa: E402
+from vanilla_read import PARTY_MON_SIZE, read_vanilla  # noqa: E402
 
 TV = Tables(layout=vanilla_frlg.LAYOUT)
 TF = Tables(layout=frlgplus.LAYOUT)
@@ -143,7 +143,7 @@ def test_every_pokemon_returns_to_the_physical_slot_it_came_from():
     boxes = empty_boxes()
     boxes[2][3] = fixtures.mon("Pikachu", 25, party=False, pid=0x01010101)
     boxes[2][9] = fixtures.mon("Squirtle", 10, party=False, pid=0x02020202)
-    party = [fixtures.mon("Bulbasaur", 7, pid=0x0A0A0A0A), bytes(100),
+    party = [fixtures.mon("Bulbasaur", 7, pid=0x0A0A0A0A), bytes(PARTY_MON_SIZE),
              fixtures.mon("Charmander", 9, pid=0x0B0B0B0B)]
     r, got = convert(fixtures.build_vanilla_save(party=party, boxes=boxes))
     check(r.returncode == 0, f"conversion failed: {r.stderr[-500:]}")
@@ -168,8 +168,8 @@ def test_the_party_is_written_at_the_generated_offset():
     p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
     sb1, _pc = migrate.assemble_blocks(p, src, TF)
     for i, want in enumerate(p["mons"]["party"]):
-        o = TF.layout["sb1_party"] + 100 * i
-        check(sb1[o:o + 100] == want, f"party slot {i} not at its generated offset")
+        o = TF.layout["sb1_party"] + PARTY_MON_SIZE * i
+        check(sb1[o:o + PARTY_MON_SIZE] == want, f"party slot {i} not at its generated offset")
 
 
 def test_an_egg_and_a_damaged_pokemon_keep_their_original_bytes():
@@ -185,6 +185,24 @@ def test_an_egg_and_a_damaged_pokemon_keep_their_original_bytes():
     check(len(p["skipped"]) == 2, f"skipped {p['skipped']}")
 
 
+def lines_under(text, heading):
+    """The loss lines beneath a heading, up to the next heading or blank line."""
+    out, on = [], False
+    for line in text.split("\n"):
+        if on:
+            if not line.startswith("    "):
+                break
+            out.append(line)
+        elif line.strip() == heading + ":":
+            on = True
+    return out
+
+
+def capacity_words(lines):
+    return [w for w in ("full", "room", "fit", "capacity", "holds")
+            if any(w in l.lower() for l in lines)]
+
+
 def test_the_plan_names_all_four_kinds_of_loss_distinctly():
     plan = {"writes": {}, "mons": {}, "skipped": [], "decisions": [], "notes": [],
             "source_version": "fr",
@@ -198,9 +216,16 @@ def test_the_plan_names_all_four_kinds_of_loss_distinctly():
         check(heading in text, f"{kind}: heading missing from the plan")
     for name in ("TM05", "Potion", "Some Key", "Odd Thing"):
         check(name in text, f"{name} missing from the plan")
-    unknown = text.split(planmod.LOSS_HEADINGS["unknown_item"])[1]
-    check("full" not in unknown.split("\n")[0].lower(),
-          "an unknown item must not be described as a capacity problem")
+    lines = lines_under(text, planmod.LOSS_HEADINGS["unknown_item"])
+    check(lines == ["    - Odd Thing: no pocket"], f"unknown_item lines: {lines}")
+    check(not capacity_words(lines),
+          f"an unknown item must not be described as a capacity problem: {lines}")
+    # The guard must be able to fail: the same check over capacity-flavoured text.
+    bad = dict(plan, losses=[{"kind": "unknown_item", "item": "Odd Thing",
+                              "detail": "the pocket is full, no room"}])
+    check(capacity_words(lines_under(planmod.render_plan(bad, src, TF.layout),
+                                     planmod.LOSS_HEADINGS["unknown_item"])),
+          "the capacity guard did not fire on capacity-flavoured text")
     check("nothing written" not in text, "render_plan must not claim a plan-only run")
 
 
@@ -249,6 +274,58 @@ def test_a_failed_verification_leaves_the_original_untouched_and_makes_no_backup
         with open(p, "rb") as f:
             check(f.read() == raw, f"{extra}: the original was modified")
         check(os.listdir(d) == ["in.srm"], f"{extra}: files created: {os.listdir(d)}")
+
+
+def test_an_existing_out_file_is_backed_up_not_destroyed():
+    """Chosen: back up, not refuse. Re-running to the same --out is legitimate, but a
+    mistyped --out must never silently destroy an unrelated save."""
+    raw = fixtures.build_vanilla_save(party=[fixtures.mon("Bulbasaur", 5)])
+    unrelated = b"someone else's save" * 50
+    src_path = write_temp(raw)
+    d = os.path.dirname(src_path)
+    out = os.path.join(d, "other.srm")
+    with open(out, "wb") as f:
+        f.write(unrelated)
+    r = run(src_path, "--apply", "--out", out, "--source-version", "fr")
+    check(r.returncode == 0, f"failed: {r.stderr[-300:]}")
+    backups = [n for n in os.listdir(d) if n.startswith("other.srm.bak-")]
+    check(len(backups) == 1, f"expected a backup of the existing --out, got {os.listdir(d)}")
+    if backups:
+        with open(os.path.join(d, backups[0]), "rb") as f:
+            check(f.read() == unrelated, "the backup is not the unrelated file's bytes")
+    with open(src_path, "rb") as f:
+        check(f.read() == raw, "the input must be untouched when --out is elsewhere")
+
+
+def test_an_unwritable_destination_is_one_sentence_not_a_traceback():
+    raw = fixtures.build_vanilla_save(party=[fixtures.mon("Bulbasaur", 5)])
+    src_path = write_temp(raw)
+    d = tempfile.mkdtemp()
+    out = os.path.join(d, "o.srm")
+    os.chmod(d, 0o555)
+    try:
+        if os.access(d, os.W_OK):
+            return                      # running as root: cannot make it unwritable
+        r = run(src_path, "--apply", "--out", out, "--source-version", "fr")
+    finally:
+        os.chmod(d, 0o755)
+    check(r.returncode != 0, "an unwritable destination should fail")
+    check("Traceback" not in r.stderr, f"leaked a traceback: {r.stderr[-300:]}")
+    check("Could not write" in r.stderr, f"no plain sentence: {r.stderr[-300:]}")
+    check(os.listdir(d) == [], f"left files behind: {os.listdir(d)}")
+    with open(src_path, "rb") as f:
+        check(f.read() == raw, "the input was modified")
+    # In place, in a read-only directory: backup cannot be made, original untouched.
+    d2 = os.path.dirname(src_path)
+    os.chmod(d2, 0o555)
+    try:
+        r = run(src_path, "--apply")
+    finally:
+        os.chmod(d2, 0o755)
+    check(r.returncode != 0 and "Traceback" not in r.stderr and "Could not write" in r.stderr,
+          f"in-place read-only: {r.returncode} {r.stderr[-300:]}")
+    with open(src_path, "rb") as f:
+        check(f.read() == raw, "in-place: the input was modified")
 
 
 def test_the_writer_recomputes_checksums_and_preserves_the_other_slot():

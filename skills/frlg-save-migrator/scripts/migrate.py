@@ -175,13 +175,23 @@ def main():
                  "reproduce: " + "; ".join(bad))
 
     target = args.out or args.save
-    in_place = os.path.exists(target) and os.path.samefile(target, args.save)
-    if in_place:
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup = f"{args.save}.bak-{stamp}"
-        shutil.copy2(args.save, backup)
-        print(f"\nBackup: {backup}")
-    _write_atomically(target, out_raw)
+    try:
+        # Anything this run is about to overwrite is backed up first: the input when
+        # converting in place, and equally an existing --out, which may be an
+        # unrelated save the user mistyped.
+        if os.path.exists(target):
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = f"{target}.bak-{stamp}"
+            n = 1
+            while os.path.exists(backup):
+                n += 1
+                backup = f"{target}.bak-{stamp}-{n}"
+            shutil.copy2(target, backup)
+            print(f"\nBackup: {backup}")
+        _write_atomically(target, out_raw)
+    except OSError as e:
+        sys.exit(f"Could not write {target}: {e.strerror or e}. The original save was "
+                 f"not modified.")
     print(f"Written: {target}")
     with open(target, "rb") as f:
         leftover_bad = savewrite.verify_all_checksums(
