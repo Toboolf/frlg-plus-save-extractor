@@ -2,7 +2,8 @@
 """Generate the vanilla -> FRLG+ ID remap tables.
 
     python3 shared/tools/generate_remaps.py --vanilla ~/projects/pokefirered \
-                                            --frlgplus ~/projects/FRLG-Plus
+                                            --frlgplus ~/projects/FRLG-Plus \
+                                            [--skill <package under skills/>]
 
 FRLG+ keeps the save block from shifting, but it does insert maps and layouts,
 which renumbers the IDs a save stores. Matching by name across the two trees
@@ -24,7 +25,7 @@ TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 # generate_tables already resolves the data directory for both the shared/ and the
 # vendored location; reuse it rather than carrying a second resolver.
-from generate_tables import DATA_DIR  # noqa: E402
+from generate_tables import DATA_DIR, _SKILLS_ROOT  # noqa: E402
 
 OUT_DIR = os.path.join(DATA_DIR, "vanilla")
 
@@ -129,7 +130,7 @@ def write(path, header, rows):
             f.write(f"# {line}\n")
         for row in rows:
             f.write("|".join(str(c) for c in row) + "\n")
-    print(f"  {os.path.relpath(path, os.path.dirname(DATA_DIR))}: {len(rows)} rows")
+    print(f"  {os.path.relpath(path, os.path.dirname(os.path.dirname(OUT_DIR)))}: {len(rows)} rows")
 
 
 def pair_up(kind, van, plus, fmt):
@@ -157,7 +158,14 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vanilla", required=True)
     ap.add_argument("--frlgplus", required=True)
+    ap.add_argument("--skill", default="frlg-save-extractor",
+                    help="which package under skills/ to write the remap tables into")
     args = ap.parse_args()
+    global OUT_DIR
+    if args.skill != "frlg-save-extractor":
+        if _SKILLS_ROOT is None:
+            raise SystemExit("--skill needs the source repo's shared/tools/ copy of this script")
+        OUT_DIR = os.path.join(_SKILLS_ROOT, args.skill, "scripts", "data", "vanilla")
     van_repo, plus_repo = os.path.abspath(args.vanilla), os.path.abspath(args.frlgplus)
     os.makedirs(OUT_DIR, exist_ok=True)
 

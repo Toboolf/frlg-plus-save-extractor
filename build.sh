@@ -14,6 +14,7 @@ VENDORED=(
 "shared/gen3core.py scripts/gen3core.py"
 "shared/frlgplus.py scripts/frlgplus.py"
 "shared/vanilla_frlg.py scripts/vanilla_frlg.py"
+"shared/vanilla_read.py scripts/vanilla_read.py"
 "shared/tools/generate_tables.py tools/generate_tables.py"
 "shared/tools/cparse.py tools/cparse.py"
 "shared/tools/generate_remaps.py tools/generate_remaps.py"
