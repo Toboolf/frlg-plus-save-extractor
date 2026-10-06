@@ -27,9 +27,9 @@ SLOT_POCKETS = {
 def convert_bag(src_pockets, plus_L, tables):
     """Re-pocket a vanilla bag into FRLG+'s rebuilt one.
 
-    Quantities are copied as stored. SaveBlock2 is never touched by the migration,
-    so the encryption key is the same on both sides and an already-XOR'd quantity
-    stays correct without being decrypted and re-encrypted.
+    Quantities in and out are PLAINTEXT: read_vanilla has already XOR'd them with
+    the key, and the bytes returned here are not yet encrypted. encrypt_quantities
+    applies the key (SaveBlock2 is untouched, so it is the same on both sides).
     """
     losses = []
     buckets = {name: [] for name in SLOT_POCKETS}
@@ -93,6 +93,22 @@ def convert_bag(src_pockets, plus_L, tables):
                                      f"{dest} pocket holds {slots}"})
         writes[off_key] = bytes(buf)
     return writes, losses
+
+
+def encrypt_quantities(writes, plus_L, key16):
+    """XOR every occupied slot's quantity in the ItemSlot pockets with the low half of
+    the save's encryption key, as the game stores them. Empty slots (id 0) stay zero.
+    convert_bag returns plaintext because read_vanilla hands it plaintext; writing that
+    straight into the save would make FRLG+ decode every stack as quantity ^ key."""
+    out = dict(writes)
+    for off_key, _cnt in SLOT_POCKETS.values():
+        buf = bytearray(out[off_key])
+        for k in range(0, len(buf), 4):
+            iid, qty = struct.unpack_from("<HH", buf, k)
+            if iid:
+                struct.pack_into("<H", buf, k + 2, qty ^ key16)
+        out[off_key] = bytes(buf)
+    return out
 
 
 # ---------------------------------------------------------------- rule 2: daycare

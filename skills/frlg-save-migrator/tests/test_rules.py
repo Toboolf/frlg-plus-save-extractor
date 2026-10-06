@@ -69,14 +69,21 @@ def test_the_items_pocket_fans_out_into_three():
     check(held == [(item("Leftovers"), 1)], f"held pocket {held}")
 
 
-def test_quantities_survive_because_the_key_does_not_change():
-    """SaveBlock2 is never touched, so the XOR key is the same before and after.
-
-    The rule therefore writes quantities already XOR'd, exactly as it found them.
-    """
+def test_quantities_are_plaintext_until_encrypted_with_the_key():
+    """read_vanilla hands the rules DECRYPTED quantities, so convert_bag returns
+    plaintext and encrypt_quantities must apply the key before anything is written.
+    Writing plaintext into the save makes FRLG+ read every stack as qty ^ key."""
     writes, _ = convert_bag(src(items=[("Potion", 999)]), F, TF)
     medicine = pocket_items(writes, "sb1_bag_medicine", F["bag_medicine_count"])
-    check(medicine == [(item("Potion"), 999)], f"quantity did not survive: {medicine}")
+    check(medicine == [(item("Potion"), 999)], f"convert_bag should stay plaintext: {medicine}")
+    key16 = 0xC0DE
+    enc = rules.encrypt_quantities(writes, F, key16)
+    medicine = pocket_items(enc, "sb1_bag_medicine", F["bag_medicine_count"])
+    check(medicine == [(item("Potion"), 999 ^ key16)], f"not encrypted: {medicine}")
+    check(enc["sb1_bag_items"] == writes["sb1_bag_items"],
+          "an empty pocket must stay all zero")
+    check(rules.encrypt_quantities(enc, F, key16)["sb1_bag_medicine"]
+          == writes["sb1_bag_medicine"], "XOR twice should round-trip")
 
 
 def test_tms_become_one_bit_each():
