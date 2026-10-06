@@ -522,13 +522,13 @@ def quick_valid_boxmon(b, max_species):
     return 1 <= species <= max_species
 
 
-def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes=None, profile=None):
+def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes=None, *, profile):
     """Decode one Pokémon. Returns None for an empty slot.
 
     `calc_modes` is the profile's IV/EV calculation mode, used only to check
-    stored stats the same way the game computed them. `profile` supplies
-    decode_box_padding/boxed_hp_fields; None means this game leaves the last
-    halfword of substructure G as padding.
+    stored stats the same way the game computed them. `profile` is required: it
+    supplies decode_box_padding and boxed_hp_fields (a forgotten profile is a
+    TypeError, not a silently wrong answer).
     """
     b = bytes(raw)
     if not any(b[:80]):
@@ -548,7 +548,7 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
     friendship = g[9]
     # The last halfword of substructure G is padding in vanilla FR/LG; a profile
     # whose game reuses it says so by returning its fields here.
-    padding = (profile.decode_box_padding(u16(g, 10)) if profile else {})
+    padding = profile.decode_box_padding(u16(g, 10))
     forme = padding.get("forme")      # None when the game stores no forme
 
     pokerus = m[0]
@@ -666,12 +666,7 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
         out["stats_source"] = "computed"
         # What a boxed Pokémon's HP and status mean is the profile's call: some
         # games record them in the padding halfword, vanilla does not.
-        if profile:
-            out.update(profile.boxed_hp_fields(padding, calc_modes))
-        else:
-            out["hp_current"] = None
-            out["status"] = "not recorded"
-            out["status_source"] = "this game leaves that halfword as padding"
+        out.update(profile.boxed_hp_fields(padding, calc_modes))
 
     # Origin
     met_level = origins & 0x7F

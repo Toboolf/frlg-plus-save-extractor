@@ -20,10 +20,6 @@ def decode_box_padding(packed):          # noqa: ARG001 - padding carries nothin
     return {}
 
 
-def box_status_name(box_status, box_hp):  # noqa: ARG001 - never called
-    raise AssertionError("vanilla stores no boxed status; decode_box_padding returns {}")
-
-
 def boxed_hp_fields(padding, calc_modes):  # noqa: ARG001
     return {"hp_current": None, "status": "not recorded", "box_hp_recorded": False,
             "status_source": "this game leaves that halfword as padding"}

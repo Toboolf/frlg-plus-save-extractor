@@ -32,6 +32,7 @@ import sys
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_DIR, "skills", "frlg-save-extractor", "scripts"))
 
+import frlgplus  # noqa: E402
 from gen3core import (SECTOR_DATA_SIZE, SUB_ORDERS, Tables, decode_pokemon,  # noqa: E402
                       read_slot, u32)
 
@@ -147,7 +148,7 @@ def main():
         mon = decode_pokemon(pc[off:off + 80], tables,
                              where=f"box {index // L['in_box_count'] + 1} "
                                    f"slot {index % L['in_box_count'] + 1}",
-                             calc_modes=key_system_modes)
+                             calc_modes=key_system_modes, profile=frlgplus.PROFILE_MODULE)
         if mon is None or mon.get("box_hp_recorded") is not False:
             continue
         label = f"{mon['where']}: {mon['nickname'] or mon['species']} Lv{mon['level']}"
