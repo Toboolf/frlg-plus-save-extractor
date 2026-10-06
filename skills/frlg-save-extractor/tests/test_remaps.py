@@ -81,22 +81,6 @@ def test_generator_writes_beside_the_vanilla_layout():
           f"generator output dir {generate_remaps.OUT_DIR} is not {DATA_DIR}/vanilla")
 
 
-def test_matches_vanilla_accepts_only_agreeing_revisions():
-    names = ["MAPSEC_A", "MAPSEC_B"]
-    ok = {"MAPSEC_A": 0, "MAPSEC_B": 1, "MAPSEC_NONE": 2, "MAPSEC_COUNT": 3}
-    check(generate_remaps.matches_vanilla(ok, names), "an agreeing revision was refused")
-    renamed = {"MAPSEC_A": 0, "MAPSEC_B_OLD": 1, "MAPSEC_NONE": 2}
-    check(not generate_remaps.matches_vanilla(renamed, names), "a renamed section was accepted")
-    shifted = {"MAPSEC_A": 1, "MAPSEC_B": 0}
-    check(not generate_remaps.matches_vanilla(shifted, names), "a shifted value was accepted")
-    wrong_none = {"MAPSEC_A": 0, "MAPSEC_B": 1, "MAPSEC_NONE": 3}
-    check(not generate_remaps.matches_vanilla(wrong_none, names), "a wrong MAPSEC_NONE was accepted")
-    no_none = {"MAPSEC_A": 0, "MAPSEC_B": 1}
-    check(not generate_remaps.matches_vanilla(no_none, names), "a revision without MAPSEC_NONE was accepted")
-    extra = {"MAPSEC_A": 0, "MAPSEC_B": 1, "MAPSEC_HOENN": 2}
-    check(not generate_remaps.matches_vanilla(extra, names), "an extra section was accepted")
-
-
 def test_pair_up_refuses_a_vanilla_only_name():
     try:
         generate_remaps.pair_up("maps", {"A": (0, 0), "Gone": (0, 1)}, {"A": (0, 0)},
@@ -129,6 +113,15 @@ def test_layout_ids_count_empty_slots():
     highest = max(v for v, _ in rows.values())
     check(highest > len(rows),
           f"highest vanilla layout id {highest} does not exceed the {len(rows)} named layouts")
+
+
+def test_object_count_changes_are_generated_and_name_their_maps():
+    """Spec 7's warning needs this table; a silently empty one disables it."""
+    changes = vanilla_frlg.object_count_changes(DATA_DIR)
+    check(isinstance(changes, dict), "object_count_changes should return a dict")
+    for name, (a, b) in changes.items():
+        check(a != b, f"{name} is listed but its counts match ({a} == {b})")
+        check(a >= 0 and b >= 0, f"{name} has a negative count")
 
 
 def main():

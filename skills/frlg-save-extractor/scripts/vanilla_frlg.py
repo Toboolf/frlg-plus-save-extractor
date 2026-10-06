@@ -52,3 +52,9 @@ def remaps(data_dir):
         "layouts": {v: f for v, f, _ in remap_rows(data_dir, "remap_layouts.txt")},
         "mapsec": {v: f for v, f, _ in remap_rows(data_dir, "remap_mapsec.txt")},
     }
+
+
+def object_count_changes(data_dir):
+    """{map name: (vanilla count, FRLG+ count)} for maps whose object events moved."""
+    return {name: (a, b) for a, b, name in
+            remap_rows(data_dir, "remap_objcount.txt")}

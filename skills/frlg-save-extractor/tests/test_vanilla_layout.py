@@ -308,6 +308,38 @@ def test_zz_committed_tables_were_not_regenerated():
           f"committed tables instead of a temp directory")
 
 
+def test_both_layouts_emit_the_fields_the_migrator_remaps():
+    """Spec 3.4 lists the save fields that carry renumbered map and layout IDs.
+
+    The migrator rewrites each of them, so each needs an offset in both layouts.
+    `location` and `last_heal_location` already existed; these seven did not.
+    """
+    for name, L in (("vanilla", V), ("frlgplus", F)):
+        for key in ("sb1_map_layout_id", "sb1_continue_game_warp", "sb1_dynamic_warp",
+                    "sb1_escape_warp", "sb1_quest_log", "quest_log_scene_count",
+                    "quest_log_scene_size", "sb1_size", "sb2_size"):
+            check(key in L, f"{name} layout is missing {key}")
+
+
+def test_the_warp_fields_sit_where_the_header_annotates_them():
+    """These five offsets are identical in both trees, and all are annotated."""
+    for name, L in (("vanilla", V), ("frlgplus", F)):
+        check(L.get("sb1_location") == 0x0004, f"{name} sb1_location")
+        check(L.get("sb1_continue_game_warp") == 0x000C, f"{name} continueGameWarp")
+        check(L.get("sb1_dynamic_warp") == 0x0014, f"{name} dynamicWarp")
+        check(L.get("sb1_last_heal_location") == 0x001C, f"{name} lastHealLocation")
+        check(L.get("sb1_escape_warp") == 0x0024, f"{name} escapeWarp")
+        check(L.get("sb1_map_layout_id") == 0x0032, f"{name} mapLayoutId")
+        check(L.get("sb1_quest_log") == 0x1300, f"{name} questLog")
+
+
+def test_struct_sizes_are_generated_not_hand_written():
+    """extras/fix_boxed_hp.py hard-codes 0x3D68 and 0xF24; the migrator must not."""
+    for name, L in (("vanilla", V), ("frlgplus", F)):
+        check(L.get("sb1_size") == 0x3D68, f"{name} sb1_size")
+        check(L.get("sb2_size") == 0xF24, f"{name} sb2_size")
+
+
 def main():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

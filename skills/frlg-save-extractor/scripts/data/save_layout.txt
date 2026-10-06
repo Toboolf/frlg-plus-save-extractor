@@ -26,6 +26,13 @@ sb1_bag_berries|13680|0x3570
 bag_berries_count|43|0x2B
 sb1_pos|0|0x0
 sb1_location|4|0x4
+sb1_map_layout_id|50|0x32
+sb1_continue_game_warp|12|0xC
+sb1_dynamic_warp|20|0x14
+sb1_escape_warp|36|0x24
+sb1_quest_log|4864|0x1300
+quest_log_scene_count|4|0x4
+quest_log_scene_size|1640|0x668
 sb1_last_heal_location|28|0x1C
 sb1_party_count|52|0x34
 sb1_party|56|0x38
@@ -55,6 +62,8 @@ trainer_flags_start|1280|0x500
 trainer_flags_end|2047|0x7FF
 sys_flags|2048|0x800
 flag_badge01|2080|0x820
+sb1_size|15720|0x3D68
+sb2_size|3876|0xF24
 sb2_player_name|0|0x0
 sb2_player_gender|8|0x8
 sb2_trainer_id|10|0xA

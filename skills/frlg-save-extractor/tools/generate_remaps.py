@@ -10,8 +10,7 @@ gives the mapping; nothing here is hand-written.
 
 Map sections are a special case: the vanilla decomp generates
 include/constants/region_map_sections.h at build time, so the vanilla side is
-read from the pre-hack revision of that file inside the FRLG+ history, and the
-revision is recorded in the table header.
+built from vanilla's own src/data/region_map/region_map_sections.json.
 """
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,52 +84,35 @@ def mapsec_ids_from_text(text):
                                  text, re.M)}
 
 
-def vanilla_section_names(vanilla_repo):
-    """Section names in the order the vanilla decomp numbers them (index == value)."""
-    path = os.path.join(vanilla_repo, "src", "data", "region_map", "region_map_sections.json")
+def vanilla_mapsec(vanilla_repo):
+    """Vanilla map sections, straight from the vanilla tree.
+
+    The decomp generates include/constants/region_map_sections.h at build time, so
+    a checkout has no header to read — but it does not need one. The template
+    src/data/region_map/region_map_sections.constants.json.txt emits
+    `enum { <every map_section.id>, MAPSEC_NONE, MAPSEC_COUNT }`, so the ids are
+    the json's order and MAPSEC_NONE is the count.
+    """
+    path = os.path.join(vanilla_repo, "src", "data", "region_map",
+                        "region_map_sections.json")
     with open(path, encoding="utf-8") as f:
-        return [e["id"] for e in json.load(f)["map_sections"]]
+        sections = json.load(f)["map_sections"]
+    out = {entry["id"]: i for i, entry in enumerate(sections)}
+    out["MAPSEC_NONE"] = len(sections)
+    return out, "src/data/region_map/region_map_sections.json"
 
 
-def matches_vanilla(consts, names):
-    """True if a header revision numbers every vanilla section as vanilla does.
-
-    MAPSEC_NONE and MAPSEC_COUNT follow the real sections and are the only names
-    a revision may carry beyond the vanilla list. MAPSEC_NONE is the one value the
-    json does not list, so it is pinned to the section count (it follows the last
-    real section) and must be present: a revision with another value is rejected.
-    """
-    if any(consts.get(n) != i for i, n in enumerate(names)):
-        return False
-    if consts.get("MAPSEC_NONE") != len(names):
-        return False
-    return set(consts) - set(names) <= {"MAPSEC_NONE", "MAPSEC_COUNT"}
-
-
-def vanilla_mapsec(frlgplus_repo, vanilla_repo):
-    """The pre-hack revision of the map-section header, from the FRLG+ history.
-
-    Not simply the oldest revision: the oldest one predates a pret rename
-    (MAPSEC_ROUTE_4_FLYDUP became MAPSEC_ROUTE_4_POKECENTER), so it names two
-    sections that vanilla at the checked-out revision does not. The right one is
-    the oldest revision that agrees with vanilla's own section list on every
-    name and value, and none is accepted without that agreement.
-    """
-    rel = "include/constants/region_map_sections.h"
-    revs = subprocess.run(["git", "-C", frlgplus_repo, "log", "--format=%H", "--", rel],
-                          capture_output=True, text=True, check=True).stdout.split()
-    if not revs:
-        raise SystemExit(f"no history for {rel} in {frlgplus_repo}")
-    names = vanilla_section_names(vanilla_repo)
-    for rev in reversed(revs):
-        text = subprocess.run(["git", "-C", frlgplus_repo, "show", f"{rev}:{rel}"],
-                              capture_output=True, text=True, check=True).stdout
-        consts = mapsec_ids_from_text(text)
-        if matches_vanilla(consts, names):
-            consts.pop("MAPSEC_COUNT", None)
-            return consts, rev
-    raise SystemExit(f"no revision of {rel} in the FRLG+ history agrees with vanilla's "
-                     f"region_map_sections.json, so the vanilla side cannot be established")
+def object_counts(repo):
+    """{map name: how many object events its map.json defines}."""
+    out = {}
+    maps_dir = os.path.join(repo, "data", "maps")
+    for name in sorted(os.listdir(maps_dir)):
+        path = os.path.join(maps_dir, name, "map.json")
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            out[name] = len(json.load(f).get("object_events") or [])
+    return out
 
 
 def write(path, header, rows):
@@ -187,7 +168,7 @@ def main():
            "Generated from data/layouts/layouts.json in both trees, matched by layout id.",
            f"Position-to-id offset {offset}, solved against FRLG+'s generated layouts.h."], rows)
 
-    van_sec, base = vanilla_mapsec(plus_repo, van_repo)
+    van_sec, base = vanilla_mapsec(van_repo)
     with open(os.path.join(plus_repo, "include", "constants", "region_map_sections.h"),
               encoding="utf-8") as f:
         plus_sec = mapsec_ids_from_text(f.read())
@@ -196,10 +177,19 @@ def main():
     write(os.path.join(OUT_DIR, "remap_mapsec.txt"),
           ["vanilla value|FRLG+ value|constant",
            "Generated from include/constants/region_map_sections.h. The vanilla side comes",
-           f"from the pre-hack revision {base} in the FRLG+ history, because the vanilla",
-           "decomp generates that header at build time. That revision is the oldest one whose",
-           "names and values all match vanilla's src/data/region_map/region_map_sections.json."],
+           f"from {base}: the names in order are values 0..N-1 and MAPSEC_NONE is N,",
+           "because the vanilla decomp generates that header at build time."],
           rows)
+
+    van_obj, plus_obj = object_counts(van_repo), object_counts(plus_repo)
+    rows = [[van_obj[n], plus_obj[n], n] for n in sorted(van_obj)
+            if n in plus_obj and van_obj[n] != plus_obj[n]]
+    write(os.path.join(OUT_DIR, "remap_objcount.txt"),
+          ["vanilla object events|FRLG+ object events|map name",
+           "Generated from each map's data/maps/<name>/map.json in both trees.",
+           "Only maps where the two disagree are listed: a save made on one of",
+           "these carries object state for a layout FRLG+ changed (spec 7)."], rows)
+    print(f"  object counts: {len(rows)} map(s) differ")
     print("done")
 
 

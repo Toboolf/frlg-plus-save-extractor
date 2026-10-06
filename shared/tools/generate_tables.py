@@ -26,8 +26,10 @@ TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 # skill package as tools/. Either way the tables go to the skill's scripts/data.
 _PARENT = os.path.dirname(TOOLS_DIR)
 if os.path.basename(_PARENT) == "shared":
-    SKILL_DIR = os.path.join(os.path.dirname(_PARENT), "skills", "frlg-save-extractor")
+    _SKILLS_ROOT = os.path.join(os.path.dirname(_PARENT), "skills")
+    SKILL_DIR = os.path.join(_SKILLS_ROOT, "frlg-save-extractor")
 else:
+    _SKILLS_ROOT = None
     SKILL_DIR = _PARENT
 DATA_DIR = os.path.join(SKILL_DIR, "scripts", "data")
 OUT_DIR = DATA_DIR          # main() repoints this for --game vanilla
@@ -564,6 +566,20 @@ def compute_layout(repo, consts, game="frlgplus"):
 
     layout["sb1_pos"] = annotated("pos")
     layout["sb1_location"] = annotated("location")
+    layout["sb1_map_layout_id"] = annotated("mapLayoutId")
+    layout["sb1_continue_game_warp"] = annotated("continueGameWarp")
+    layout["sb1_dynamic_warp"] = annotated("dynamicWarp")
+    layout["sb1_escape_warp"] = annotated("escapeWarp")
+    layout["sb1_quest_log"] = annotated("questLog")
+    layout["quest_log_scene_count"] = consts["QUEST_LOG_SCENE_COUNT"]
+    # QuestLogScene has a zero-length terminator, so sizeof() is not in a comment.
+    # easyChatProfile is the next annotated field, so the stride is the span / count.
+    scene_span = annotated("easyChatProfile") - layout["sb1_quest_log"]
+    count = layout["quest_log_scene_count"]
+    if scene_span % count:
+        raise SystemExit(
+            f"quest log span {scene_span:#x} does not divide by {count} scenes")
+    layout["quest_log_scene_size"] = scene_span // count
     layout["sb1_last_heal_location"] = annotated("lastHealLocation")
     layout["sb1_party_count"] = annotated("playerPartyCount")
     layout["sb1_party"] = annotated("playerParty")
@@ -623,6 +639,18 @@ def compute_layout(repo, consts, game="frlgplus"):
         if not m:
             raise SystemExit(f"no annotated offset for SaveBlock2.{field}")
         return int(m.group(1), 16)
+
+    def struct_size(name):
+        # The `// size: 0x...` comment trails the closing brace, outside the sliced body.
+        start = text.index(f"struct {name}")
+        close = start + cparse._matching_brace(text[start:], text[start:].index("{"))
+        m = re.match(r"[^\n]*?//\s*size:\s*(0x[0-9A-Fa-f]+)", text[close + 1:])
+        if not m:
+            raise SystemExit(f"no `// size:` comment on struct {name}")
+        return int(m.group(1), 16)
+
+    layout["sb1_size"] = struct_size("SaveBlock1")
+    layout["sb2_size"] = struct_size("SaveBlock2")
 
     layout["sb2_player_name"] = annotated2("playerName")
     layout["sb2_player_gender"] = annotated2("playerGender")
@@ -765,13 +793,20 @@ def main():
                     help="which tree --repo points at (default: frlgplus)")
     ap.add_argument("--repo", required=True,
                     help="checkout of Deokishisu/FRLG-Plus, or of pret/pokefirered for --game vanilla")
+    ap.add_argument("--skill", default="frlg-save-extractor",
+                    help="which package under skills/ to write tables into")
     args = ap.parse_args()
     repo = os.path.abspath(args.repo)
     for rel in REQUIRED[args.game]:
         if not os.path.isfile(os.path.join(repo, rel)):
             raise SystemExit(f"{repo} is missing {rel}, which --game {args.game} needs")
     global OUT_DIR
-    OUT_DIR = DATA_DIR if args.game == "frlgplus" else os.path.join(DATA_DIR, "vanilla")
+    data_dir = DATA_DIR
+    if args.skill != "frlg-save-extractor":
+        if _SKILLS_ROOT is None:
+            raise SystemExit("--skill needs the source repo's shared/tools/ copy of this script")
+        data_dir = os.path.join(_SKILLS_ROOT, args.skill, "scripts", "data")
+    OUT_DIR = data_dir if args.game == "frlgplus" else os.path.join(data_dir, "vanilla")
 
     consts = Consts()
     for rel in ["include/constants/global.h", "include/constants/species.h", "include/constants/items.h",

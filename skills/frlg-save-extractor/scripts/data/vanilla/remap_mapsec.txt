@@ -1,8 +1,7 @@
 # vanilla value|FRLG+ value|constant
 # Generated from include/constants/region_map_sections.h. The vanilla side comes
-# from the pre-hack revision 250f955ae63496bfebd71c34aa3f0cd26e562b6d in the FRLG+ history, because the vanilla
-# decomp generates that header at build time. That revision is the oldest one whose
-# names and values all match vanilla's src/data/region_map/region_map_sections.json.
+# from src/data/region_map/region_map_sections.json: the names in order are values 0..N-1 and MAPSEC_NONE is N,
+# because the vanilla decomp generates that header at build time.
 61|61|MAPSEC_ABANDONED_SHIP
 183|183|MAPSEC_ALTERING_CAVE
 83|83|MAPSEC_ANCIENT_TOMB
