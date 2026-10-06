@@ -18,12 +18,62 @@ Every section is parsed independently: one failure never stops the rest.
 """
 from __future__ import annotations
 
+import sys
 import traceback
 
 from gen3core import (HM_MOVES, NATURES, SECTOR_DATA_SIZE, choose_slot, decode_pokemon, decode_text,
                       nature_effect, quick_valid_boxmon, to_display, u16, u32, s16)
 
 PROFILE = "FRLG+ v1.5.1 (offsets generated from the FRLG+ source)"
+PROFILE_MODULE = sys.modules[__name__]
+
+NAME = "FRLG+ v1.5.1"
+LAYOUT = "save_layout.txt"
+MAX_SPECIES = 439          # NUM_SPECIES plus the 27 Unown letter slots
+
+# FRLG+ reuses the last halfword of substructure G — padding in vanilla — for a
+# boxed Pokémon's HP, ailment and forme (see struct PokemonSubstruct0 and
+# StoreHPAndStatusInBoxMon in src/pokemon.c).
+BOX_STATUS = {8: "poisoned", 9: "burned", 10: "frozen", 11: "paralyzed"}
+
+
+def decode_box_padding(packed):
+    return {"box_hp": packed & 0x3FF,
+            "box_status": (packed >> 10) & 0xF,
+            "forme": (packed >> 14) & 3}
+
+
+def box_status_name(box_status, box_hp):
+    """FRLG+ packs the ailment into 4 bits: 0 none, 1-7 asleep turns, 8-11 PSN/BRN/FRZ/PRZ."""
+    if box_status == 0:
+        return "fainted" if box_hp == 0 else "healthy"
+    if box_status < 8:
+        return f"asleep ({box_status} turns)"
+    return BOX_STATUS.get(box_status, f"status #{box_status}")
+
+
+def boxed_hp_fields(padding, calc_modes):
+    """HP/status fields for a boxed Pokémon.
+
+    FRLG+ writes them on deposit: with No Free Heals on it stores the live
+    values, with it off it stores max HP and no status. In vanilla that
+    halfword is padding, so a 0 while the key is off means the slot was simply
+    never written, not a fainted Pokémon.
+    """
+    hp = padding["box_hp"]
+    if (calc_modes or {}).get("no_free_heals"):
+        return {"hp_current": hp,
+                "status": box_status_name(padding["box_status"], hp),
+                "box_hp_recorded": True,
+                "status_source": "FRLG+ boxed HP/status, live (No Free Heals is on)"}
+    if hp:
+        return {"hp_current": hp, "status": "healthy", "box_hp_recorded": True,
+                "status_source": ("FRLG+ boxed HP, written as max HP on deposit "
+                                  "(No Free Heals is off)")}
+    return {"hp_current": None, "status": "not recorded", "box_hp_recorded": False,
+            "status_source": ("no boxed HP stored for this slot — nothing has written it "
+                              "since this Pokémon was put in the box; a save editor or a "
+                              "different ROM build will leave it at zero")}
 
 BADGES = ["Boulder (Brock)", "Cascade (Misty)", "Thunder (Lt. Surge)", "Rainbow (Erika)",
           "Soul (Koga)", "Marsh (Sabrina)", "Volcano (Blaine)", "Earth (Giovanni)"]
@@ -348,7 +398,7 @@ def _parse_party(sb1, tables, player, key_system, s, res):
     for i in range(6):
         off = L["sb1_party"] + 100 * i
         m = decode_pokemon(sb1[off:off + 100], tables, player, party=True, where=f"party {i + 1}",
-                           calc_modes=_calc_modes(key_system))
+                           calc_modes=_calc_modes(key_system), profile=PROFILE_MODULE)
         if m:
             mons.append(m)
     good = [m for m in mons if m["checks"]["checksum"] == "ok"]
@@ -377,7 +427,7 @@ def _parse_boxes(pc, tables, player, key_system, s):
             off = L["pc_boxes"] + (bx * L["in_box_count"] + slot) * 80
             m = decode_pokemon(pc[off:off + 80], tables, player,
                                where=f"box {bx + 1} slot {slot + 1}",
-                               calc_modes=_calc_modes(key_system))
+                               calc_modes=_calc_modes(key_system), profile=PROFILE_MODULE)
             if m:
                 mons.append(m)
                 if m["checks"]["checksum"] != "ok":
@@ -556,7 +606,7 @@ def _parse_day_care(sb1, tables, player, key_system, s):
         for i in range(count):
             off = base + i * L["daycare_mon_size"]
             m = decode_pokemon(sb1[off:off + 80], tables, player, where=f"{label} slot {i + 1}",
-                               calc_modes=modes)
+                               calc_modes=modes, profile=PROFILE_MODULE)
             if m:
                 m["steps"] = u32(sb1, off + L["daycare_mon_size"] - 4)
                 mons.append(m)
@@ -626,9 +676,9 @@ def _scan_other_pokemon(sb1, pc, tables, player, key_system):
             if skipped is not None:
                 off = skipped
                 continue
-            if quick_valid_boxmon(buf[off:off + 80], max_species=L["num_species"] + 27):
+            if quick_valid_boxmon(buf[off:off + 80], MAX_SPECIES):
                 m = decode_pokemon(buf[off:off + 80], tables, player, where=f"{rname} @0x{off:04X}",
-                                   calc_modes=_calc_modes(key_system))
+                                   calc_modes=_calc_modes(key_system), profile=PROFILE_MODULE)
                 m["storage_guess"] = "unknown storage (Quest Log snapshot?)"
                 hits.append(m)
                 off += 80

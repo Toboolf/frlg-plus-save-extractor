@@ -13,6 +13,7 @@ cd "$(dirname "$0")"
 VENDORED=(
 "shared/gen3core.py scripts/gen3core.py"
 "shared/frlgplus.py scripts/frlgplus.py"
+"shared/vanilla_frlg.py scripts/vanilla_frlg.py"
 )
 
 CHECK_ONLY=${1:-}

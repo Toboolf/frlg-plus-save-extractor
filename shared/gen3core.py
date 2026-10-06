@@ -1,8 +1,8 @@
 """Generic Generation III save + Pokémon decoding.
 
-Shared by every Gen 3 profile (FRLG+ now, vanilla FR/LG/RSE later). Nothing in
-here knows where a particular game keeps its bag or flags; that lives in the
-profile module (frlgplus.py).
+Shared by every Gen 3 profile (FRLG+, vanilla FR/LG, and others later). Nothing
+in here knows where a particular game keeps its bag or flags, or what a ROM hack
+stores in padding; that lives in the profile module (e.g. frlgplus.py).
 """
 from __future__ import annotations
 
@@ -198,13 +198,20 @@ def deep_merge(base, overlay):
 class Tables:
     """Every name, stat and offset table, loaded from scripts/data.
 
-    Those files are generated from the FRLG+ source by tools/generate_tables.py —
-    nothing here is hand-written, so a new FRLG+ version only needs a re-run.
+    Those files are generated from a game's source by tools/generate_tables.py —
+    nothing here is hand-written, so a new game version only needs a re-run.
+    `layout` names the save-layout table of the profile in use.
     """
 
-    def __init__(self, data_dir=DATA_DIR):
+    def __init__(self, data_dir=DATA_DIR, layout="save_layout.txt"):
         self.data_dir = data_dir
-        self.layout = {name: int(cols[0]) for name, cols in self._rows("save_layout.txt", 1)}
+        self.layout_file = layout
+        layout_path = os.path.join(data_dir, layout)
+        if not os.path.isfile(layout_path):
+            raise FileNotFoundError(
+                f"layout table {layout!r} not found at {layout_path} — "
+                f"run tools/generate_tables.py for that game first")
+        self.layout = {name: int(cols[0]) for name, cols in self._rows(layout, 1)}
 
         self.species = {}            # internal id -> record
         self.species_by_national = {}
@@ -411,10 +418,11 @@ DEOXYS_FORMES = {0: "Normal", 1: "Attack", 2: "Defense", 3: "Speed"}
 
 
 def apply_calc_modes(ivs, evs, modes):
-    """FRLG+'s Key System can make the game calculate stats as if IVs/EVs were fixed.
+    """Some games compute stats as if IVs/EVs were fixed values.
 
-    Mirrors CalculateMonStats in src/pokemon.c: the stored IVs and EVs never
-    change, only the numbers the stat formula is fed.
+    Mirrors CalculateMonStats: the stored IVs and EVs never change, only the
+    numbers the stat formula is fed. A profile decides whether any substitution
+    applies and passes the modes in; `None` means "use the stored values".
     """
     if not modes:
         return ivs, evs
@@ -501,7 +509,7 @@ def decrypt_substructures(b):
     return subs, checksum
 
 
-def quick_valid_boxmon(b, max_species=439):
+def quick_valid_boxmon(b, max_species):
     """Cheap test used when scanning unknown memory for stray Pokémon."""
     if len(b) < 80 or not any(b[:80]):
         return False
@@ -514,11 +522,13 @@ def quick_valid_boxmon(b, max_species=439):
     return 1 <= species <= max_species
 
 
-def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes=None):
+def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes=None, profile=None):
     """Decode one Pokémon. Returns None for an empty slot.
 
-    `calc_modes` is the Key System's IV/EV calculation mode, used only to check
-    stored stats the same way the game computed them.
+    `calc_modes` is the profile's IV/EV calculation mode, used only to check
+    stored stats the same way the game computed them. `profile` supplies
+    decode_box_padding/boxed_hp_fields; None means this game leaves the last
+    halfword of substructure G as padding.
     """
     b = bytes(raw)
     if not any(b[:80]):
@@ -536,10 +546,10 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
     exp = u32(g, 4)
     pp_bonuses = g[8]
     friendship = g[9]
-    # FRLG+ reuses the last halfword of substructure G, which is padding in vanilla,
-    # to keep a boxed Pokémon's HP and status (see struct PokemonSubstruct0).
-    packed = u16(g, 10)
-    box_hp, box_status, forme = packed & 0x3FF, (packed >> 10) & 0xF, (packed >> 14) & 3
+    # The last halfword of substructure G is padding in vanilla FR/LG; a profile
+    # whose game reuses it says so by returning its fields here.
+    padding = (profile.decode_box_padding(u16(g, 10)) if profile else {})
+    forme = padding.get("forme")      # None when the game stores no forme
 
     pokerus = m[0]
     met_loc = m[1]
@@ -612,7 +622,8 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
     if rec and rec["name"] == "Unown":
         out["unown_form"] = unown_letter(pid)
     if rec and rec["name"] == "Deoxys":
-        out["forme"] = DEOXYS_FORMES[forme]
+        if forme is not None:
+            out["forme"] = DEOXYS_FORMES[forme]
     elif forme:
         out["forme_raw"] = forme
     if any(contest.values()):
@@ -631,8 +642,8 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
     if marks:
         out["markings"] = marks
 
-    # Stats. FRLG+ feeds the stat formula substituted IVs/EVs when the Key System
-    # says to, so check stored stats against the same numbers the game used.
+    # Stats. Some games feed the stat formula substituted IVs/EVs (the profile
+    # passes calc_modes), so check stored stats against the same numbers the game used.
     calc_ivs, calc_evs = apply_calc_modes(list(ivs), list(evs), calc_modes)
     shedinja = bool(rec and rec["name"] == "Shedinja")
     stats_computed = None
@@ -653,29 +664,14 @@ def decode_pokemon(raw, tables, player=None, party=False, where=None, calc_modes
     elif stats_computed:
         out["stats"] = to_display(stats_computed)
         out["stats_source"] = "computed"
-        # FRLG+ writes a boxed Pokémon's HP and status on deposit (StoreHPAndStatusInBoxMon):
-        # with No Free Heals on it stores the live values, with it off it stores max HP and no
-        # status. In vanilla this halfword is padding, so a 0 while the key is off means the
-        # slot was simply never written — not a fainted Pokémon.
-        live = bool((calc_modes or {}).get("no_free_heals"))
-        if live:
-            out["hp_current"] = box_hp
-            out["status"] = _box_status_name(box_status, box_hp)
-            out["box_hp_recorded"] = True
-            out["status_source"] = "FRLG+ boxed HP/status, live (No Free Heals is on)"
-        elif box_hp:
-            out["hp_current"] = box_hp
-            out["status"] = "healthy"
-            out["box_hp_recorded"] = True
-            out["status_source"] = ("FRLG+ boxed HP, written as max HP on deposit "
-                                    "(No Free Heals is off)")
+        # What a boxed Pokémon's HP and status mean is the profile's call: some
+        # games record them in the padding halfword, vanilla does not.
+        if profile:
+            out.update(profile.boxed_hp_fields(padding, calc_modes))
         else:
             out["hp_current"] = None
             out["status"] = "not recorded"
-            out["box_hp_recorded"] = False
-            out["status_source"] = ("no boxed HP stored for this slot — nothing has written it "
-                                    "since this Pokémon was put in the box; a save editor or a "
-                                    "different ROM build will leave it at zero")
+            out["status_source"] = "this game leaves that halfword as padding"
 
     # Origin
     met_level = origins & 0x7F
@@ -728,19 +724,6 @@ def _compare_stats(stored, computed, rec, ivs, evs, level, nature, shedinja):
                          f"— most likely EVs gained since the last level-up")
     return "mismatch", (f"stored stats differ from recomputed on {','.join(diff)} "
                         f"(base-stat table or hack change?)")
-
-
-# FRLG+ packs a boxed Pokémon's ailment into 4 bits (StoreHPAndStatusInBoxMon):
-# 0 = none, 1-7 = asleep for that many turns, 8-11 = PSN/BRN/FRZ/PRZ.
-BOX_STATUS = {8: "poisoned", 9: "burned", 10: "frozen", 11: "paralyzed"}
-
-
-def _box_status_name(box_status, box_hp):
-    if box_status == 0:
-        return "fainted" if box_hp == 0 else "healthy"
-    if box_status < 8:
-        return f"asleep ({box_status} turns)"
-    return BOX_STATUS.get(box_status, f"status #{box_status}")
 
 
 def _status_name(status):
