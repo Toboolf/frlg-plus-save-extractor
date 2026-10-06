@@ -8,12 +8,19 @@ are pinned here against the values the vanilla bag layout forces: four-byte
 ItemSlots, pockets in vanilla's order, and nothing where FRLG+ put its bitfield.
 """
 import os
+import re
+import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 
+sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+
 from gen3core import Tables  # noqa: E402
+import generate_tables  # noqa: E402
+from cparse import Consts  # noqa: E402
 import vanilla_frlg  # noqa: E402
 import frlgplus  # noqa: E402
 
@@ -96,12 +103,88 @@ def test_vanilla_has_no_frlgplus_only_keys():
         check(k not in V, f"vanilla layout should not define {k}")
 
 
+# The generator tests below need a real pret/pokefirered checkout to copy from.
+# One is not shipped, so they are skipped (and say so) where it is absent.
+VANILLA_SRC = os.path.expanduser(os.environ.get("POKEFIRED_REPO", "~/projects/pokefirered"))
+SKIPPED = []
+
+
+def _copy_vanilla_tree(dst, omit=()):
+    """Copy just the headers --game vanilla needs into dst, minus anything in omit."""
+    for rel in generate_tables.REQUIRED["vanilla"]:
+        if rel in omit:
+            continue
+        os.makedirs(os.path.dirname(os.path.join(dst, rel)), exist_ok=True)
+        shutil.copy(os.path.join(VANILLA_SRC, rel), os.path.join(dst, rel))
+
+
+def _walk(repo):
+    consts = Consts()
+    for rel in generate_tables.REQUIRED["vanilla"]:
+        if not rel.startswith("include/constants/"):
+            continue
+        consts.load_defines(os.path.join(repo, rel))
+    return generate_tables.compute_layout(repo, consts, "vanilla")
+
+
+def test_vanilla_walk_refuses_swapped_pocket_counts():
+    """Swapping two pocket counts keeps the total, so the seen1 landing check still
+    passes; only the per-pocket annotation check catches the wrong middle offsets."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_vanilla_walk_refuses_swapped_pocket_counts")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        check(_walk(tmp)["sb1_bag_key_items"] == 0x3B8, "undoctored tree should walk cleanly")
+        path = os.path.join(tmp, "include/constants/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        items = int(re.search(r"#define BAG_ITEMS_COUNT\s+(\d+)", text).group(1))
+        keys = int(re.search(r"#define BAG_KEYITEMS_COUNT\s+(\d+)", text).group(1))
+        text = re.sub(r"(#define BAG_ITEMS_COUNT\s+)\d+", lambda m: m.group(1) + str(keys), text)
+        text = re.sub(r"(#define BAG_KEYITEMS_COUNT\s+)\d+", lambda m: m.group(1) + str(items), text)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("annotated at" in str(e), f"refused, but not on the pocket annotation: {e}")
+        else:
+            check(False, "swapped pocket counts should have been refused")
+
+
+def test_vanilla_run_names_a_missing_file():
+    """Every header the vanilla layout reads is refused by name, not with a KeyError."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_vanilla_run_names_a_missing_file")
+        return
+    for rel in generate_tables.REQUIRED["vanilla"]:
+        with tempfile.TemporaryDirectory() as tmp:
+            _copy_vanilla_tree(tmp, omit=(rel,))
+            argv = sys.argv
+            sys.argv = ["generate_tables.py", "--game", "vanilla", "--repo", tmp]
+            try:
+                generate_tables.main()
+            except SystemExit as e:
+                msg = str(e)
+                check(msg.endswith(f"is missing {rel}, which --game vanilla needs"),
+                      f"{rel}: wrong refusal: {msg}")
+            except BaseException as e:  # a KeyError or traceback is the bug being tested
+                check(False, f"{rel}: raised {type(e).__name__}: {e}")
+            else:
+                check(False, f"{rel}: generator ran despite the missing file")
+            finally:
+                sys.argv = argv
+
+
 def main():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
             fn()
     for f in FAILS:
         print(f"FAIL: {f}")
+    for n in SKIPPED:
+        print(f"SKIPPED (no pokefirered checkout at {VANILLA_SRC}): {n}")
     print(f"\n{len(FAILS)} failures")
     return 1 if FAILS else 0
 

@@ -38,7 +38,15 @@ OUT_DIR = DATA_DIR          # main() repoints this for --game vanilla
 REQUIRED = {
     "frlgplus": ["include/global.h", "include/constants/global.h",
                  "include/constants/region_map_sections.h", "include/constants/map_groups.h"],
-    "vanilla": ["include/global.h", "include/constants/global.h"],
+    # Everything compute_layout reads. A tree missing one is refused by name here
+    # rather than dying later on a KeyError, since the constants loop skips quietly.
+    "vanilla": ["include/global.h", "include/save.h", "include/pokemon_storage_system.h",
+                # constants, in the order they must load: flags.h needs opponents.h's
+                # MAX_TRAINERS_COUNT already defined
+                "include/constants/global.h", "include/constants/items.h",
+                "include/constants/species.h", "include/constants/game_stat.h",
+                "include/constants/opponents.h", "include/constants/vars.h",
+                "include/constants/flags.h"],
 }
 
 GROWTH_CODES = {"GROWTH_MEDIUM_FAST": "MF", "GROWTH_ERRATIC": "ER", "GROWTH_FLUCTUATING": "FL",
@@ -485,11 +493,16 @@ def compute_layout(repo, consts, game="frlgplus"):
     if game == "vanilla":
         # Vanilla's pockets are five plain ItemSlot arrays in this order, and the
         # walk must land exactly on seen1 or the layout is wrong.
-        for key, count_const in [("items", "BAG_ITEMS_COUNT"),
-                                 ("key_items", "BAG_KEYITEMS_COUNT"),
-                                 ("poke_balls", "BAG_POKEBALLS_COUNT"),
-                                 ("tmhm", "BAG_TMHM_COUNT"),
-                                 ("berries", "BAG_BERRIES_COUNT")]:
+        for key, count_const, field in [("items", "BAG_ITEMS_COUNT", "bagPocket_Items"),
+                                        ("key_items", "BAG_KEYITEMS_COUNT", "bagPocket_KeyItems"),
+                                        ("poke_balls", "BAG_POKEBALLS_COUNT", "bagPocket_PokeBalls"),
+                                        ("tmhm", "BAG_TMHM_COUNT", "bagPocket_TMHM"),
+                                        ("berries", "BAG_BERRIES_COUNT", "bagPocket_Berries")]:
+            # Vanilla annotates every pocket, so check each walked offset, not just the sum:
+            # two swapped counts would still land on seen1 with wrong offsets in between.
+            if off != annotated(field):
+                raise SystemExit(f"vanilla bag walk put {key} at {off:#x} but SaveBlock1.{field} "
+                                 f"is annotated at {annotated(field):#x}")
             layout[f"sb1_bag_{key}"] = off
             layout[f"bag_{key}_count"] = consts[count_const]
             off += 4 * consts[count_const]
