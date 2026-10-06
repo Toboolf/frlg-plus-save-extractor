@@ -370,11 +370,14 @@ def _bag_save():
 
 
 def test_item_count_conservation_catches_a_boundary_error():
-    """The check that a wrong pocket boundary cannot pass.
+    """Item conservation: nothing dropped, duplicated or mis-routed by the conversion.
 
-    Phase A established that 'every item in its pocket at quantity 1-999' is true
-    of a vanilla bag read through the FRLG+ layout, so it cannot catch a layout
-    mistake. The multiset of (item, quantity) can.
+    It does NOT detect a moved pocket boundary in general. Phase A showed 'every item
+    in its pocket at quantity 1-999' holds for a vanilla bag read through the FRLG+
+    layout, and the multiset is nearly as blind: both layouts carve the same region
+    into 4-byte slots, so it only changes where slots fall into the TM-bit/key-index
+    bytes or past the region (the Key Items fixture below). Layout detection is the
+    job of the Day Care probe; this test defends the items.
 
     Both sides are PLAINTEXT: read_vanilla decrypts, and item_multiset_frlgplus
     decrypts the converted image's XOR-encrypted quantities.
@@ -435,25 +438,59 @@ def test_conservation_compares_like_with_like_encryption():
 
 
 def test_the_daycare_step_counter_discriminates_the_layouts():
-    """A byte that moves between the layouts, so reading the result with the wrong
-    one is detectable. It needs no decryption, which is why it is the cheap probe."""
-    raw = fixtures.build_vanilla_save(daycare_step=137)
+    """Reading a converted image through the wrong (vanilla) layout is detectable.
+
+    This, not item conservation, is what defends against a layout mix-up. Item
+    conservation defends against dropped, duplicated and mis-routed items; it cannot
+    see a moved pocket boundary in general, because both layouts carve the same
+    region into 4-byte slots.
+
+    Two independent halves, so neither is load-bearing alone:
+      1. WRITTEN FIELDS. The conversion itself writes offspringPersonality (u32 at
+         the FRLG+ offset) and the two Day Care Pokemon (4 bytes earlier than
+         vanilla). A vanilla-layout read of the result gets the step counter where
+         it expects the offspring, and shifted mon bytes. This holds whatever the
+         padding does.
+      2. PADDING. The conversion clears the source's stale step-counter byte, which
+         sits in FRLG+ struct padding. Without that, a vanilla read of the step
+         counter on the result still sees the old value. This defends that clearing.
+    """
+    pattern = bytes((i * 7) % 251 + 1 for i in range(280))
+    raw = fixtures.build_vanilla_save(daycare_step=137, daycare_offspring=0xBEEF,
+                                      daycare_mons=pattern)
     out = _convert_to_bytes(raw)
     v_out = read_vanilla(out, TV)           # deliberately the WRONG layout
-    f_step = read_frlgplus_sb1(out)[TF.layout["sb1_daycare_step_counter"]]
-    check(f_step == 137, f"FRLG+ layout should see 137, got {f_step}")
-    wrong = v_out["sb1"][TV.layout["sb1_daycare_step_counter"]]
-    check(wrong != 137,
-          "the vanilla layout should NOT see the converted step counter — if it does, "
-          "this probe cannot discriminate and the test is worthless")
-    # The same probe on the SOURCE, which is what Phase A measured on the real save
+    f_sb1, v_sb1 = read_frlgplus_sb1(out), v_out["sb1"]
+    LF, LV = TF.layout, TV.layout
+    check(LF["sb1_daycare_offspring"] != LV["sb1_daycare_offspring"]
+          and LF["sb1_daycare"] != LV["sb1_daycare"]
+          and LF["sb1_daycare_step_counter"] != LV["sb1_daycare_step_counter"],
+          "the two layouts must place the Day Care fields at different offsets")
+
+    # Half 1: fields the conversion writes.
+    check(u32(f_sb1, LF["sb1_daycare_offspring"]) == 0xBEEF,
+          "FRLG+ layout should read the offspring personality the conversion wrote")
+    check(f_sb1[LF["sb1_daycare"]:LF["sb1_daycare"] + 280] == pattern,
+          "FRLG+ layout should read the Day Care Pokemon the conversion moved")
+    check(u16(v_sb1, LV["sb1_daycare_offspring"]) != 0xBEEF,
+          "a vanilla-layout read must NOT recover the offspring personality")
+    check(v_sb1[LV["sb1_daycare"]:LV["sb1_daycare"] + 280] != pattern,
+          "a vanilla-layout read must NOT recover the Day Care Pokemon")
+
+    # Half 2: the padding the conversion clears.
+    check(f_sb1[LF["sb1_daycare_step_counter"]] == 137, "FRLG+ layout should see 137")
+    check(v_sb1[LV["sb1_daycare_step_counter"]] != 137,
+          "the vanilla layout should NOT see the step counter; the stale source byte "
+          "in FRLG+ padding must have been cleared")
+
+    # The same probe on the SOURCE, as Phase A measured on the real save
     # (206 under the vanilla layout, 0 under FRLG+'s).
-    src_sb1 = read_vanilla(raw, TV)["sb1"]
-    check(src_sb1[TV.layout["sb1_daycare_step_counter"]] == 137
-          and src_sb1[TF.layout["sb1_daycare_step_counter"]] == 0,
+    # (Own fixture: with an offspring set, FRLG+'s step offset overlaps vanilla's
+    # offspring field and would read part of it.)
+    src_sb1 = read_vanilla(fixtures.build_vanilla_save(daycare_step=137), TV)["sb1"]
+    check(src_sb1[LV["sb1_daycare_step_counter"]] == 137
+          and src_sb1[LF["sb1_daycare_step_counter"]] == 0,
           "the source should read 137 under vanilla and 0 under FRLG+")
-    check(TV.layout["sb1_daycare_step_counter"] != TF.layout["sb1_daycare_step_counter"],
-          "the two layouts must put the step counter at different offsets")
 
 
 def _verify(raw, out, losses=()):

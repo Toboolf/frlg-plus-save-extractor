@@ -16,7 +16,7 @@ copied byte for byte.
 | Player name, gender, trainer and secret IDs, options, encryption key | SaveBlock2 is untouched. |
 | Money and coins | Stored XOR the encryption key; the key is unchanged, so the bytes are too. |
 | PC item storage | 30 slots, quantity stored raw in both games. |
-| Mail, the Fame Checker, the Trainer Tower | Not part of any rule. |
+| Mail, the Fame Checker, the Trainer Tower | None of the three is a field in the generated layout, so no conversion rule can address those offsets; they stay as copied. (This is by construction, not the result of a byte-level comparison.) |
 | Everything about each Pokémon except its padding halfword | See below. |
 
 ## Converted

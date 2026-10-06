@@ -67,7 +67,7 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
                        items=(), key_items=(), poke_balls=(), tmhm=(), berries=(),
                        player="ASH", map_group=3, map_num=0, layout_id=1,
                        warp_id=7, warp_x=13, warp_y=21,
-                       daycare_step=0, one_slot_only=False):
+                       daycare_step=0, daycare_offspring=0, daycare_mons=b"", one_slot_only=False):
     """A 128 KB vanilla save. Pocket arguments are lists of (item id, quantity)."""
     sb1 = bytearray(L["sb1_size"])
     sb2 = bytearray(L["sb2_size"])
@@ -97,6 +97,8 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
                          warp_id & 0xFF, warp_x, warp_y)
     struct.pack_into("<H", sb1, L["sb1_map_layout_id"], layout_id)
     sb1[L["sb1_daycare_step_counter"]] = daycare_step
+    struct.pack_into("<H", sb1, L["sb1_daycare_offspring"], daycare_offspring)
+    sb1[L["sb1_daycare"]:L["sb1_daycare"] + len(daycare_mons)] = daycare_mons
 
     sb1[L["sb1_party_count"]] = len(party)
     for i, m in enumerate(party):
