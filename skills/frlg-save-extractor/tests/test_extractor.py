@@ -143,7 +143,7 @@ def build_save(variant=0):
                         "Quick Attack"], met=126, met_level=3),
         make_mon("Blastoise", 42, 0x0000000D, otid=OLD_OTID,
                  moves=["Bite", "Water Gun", "Rain Dance", "Withdraw"]),
-        make_mon("Vaporeon", 43, 0x00000009, nick="Splashy",
+        make_mon("Vaporeon", 43, 0x00000009, nick="Tidally",
                  moves=["AuroraBeam", "Haze", "Bite", "Quick Attack"], met=136, met_level=25),
         make_mon("Mr. Mime", 58, 0x0000000A, otid=0x0BADF00D, ot="BLUE", nick="Mimien",
                  moves=["Psychic", "Confusion", "Psybeam", "Magical Leaf"], met=254, met_level=30),
