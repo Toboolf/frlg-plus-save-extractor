@@ -81,6 +81,26 @@ def test_generator_writes_beside_the_vanilla_layout():
           f"generator output dir {generate_remaps.OUT_DIR} is not {DATA_DIR}/vanilla")
 
 
+def test_vanilla_mapsec_refuses_a_missing_or_duplicated_json():
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            generate_remaps.vanilla_mapsec(tmp)
+            check(False, "a missing region_map_sections.json was not refused")
+        except SystemExit as e:
+            check("region_map_sections.json" in str(e), f"refusal does not name the file: {e}")
+        d = os.path.join(tmp, "src", "data", "region_map")
+        os.makedirs(d)
+        with open(os.path.join(d, "region_map_sections.json"), "w") as f:
+            json.dump({"map_sections": [{"id": "MAPSEC_A"}, {"id": "MAPSEC_B"}, {"id": "MAPSEC_A"}]}, f)
+        try:
+            generate_remaps.vanilla_mapsec(tmp)
+            check(False, "a duplicate section id was not refused")
+        except SystemExit as e:
+            check("MAPSEC_A" in str(e), f"refusal does not name the duplicate: {e}")
+
+
 def test_pair_up_refuses_a_vanilla_only_name():
     try:
         generate_remaps.pair_up("maps", {"A": (0, 0), "Gone": (0, 1)}, {"A": (0, 0)},

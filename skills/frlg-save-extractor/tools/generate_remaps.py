@@ -95,8 +95,16 @@ def vanilla_mapsec(vanilla_repo):
     """
     path = os.path.join(vanilla_repo, "src", "data", "region_map",
                         "region_map_sections.json")
+    if not os.path.isfile(path):
+        raise SystemExit(f"{vanilla_repo} is missing src/data/region_map/region_map_sections.json, "
+                         f"which the vanilla map-section remap needs")
     with open(path, encoding="utf-8") as f:
         sections = json.load(f)["map_sections"]
+    seen = set()
+    for entry in sections:
+        if entry["id"] in seen:
+            raise SystemExit(f"{path} lists {entry['id']} twice, which would shift every later id")
+        seen.add(entry["id"])
     out = {entry["id"]: i for i, entry in enumerate(sections)}
     out["MAPSEC_NONE"] = len(sections)
     return out, "src/data/region_map/region_map_sections.json"

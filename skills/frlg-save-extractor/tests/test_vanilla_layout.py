@@ -12,6 +12,7 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -297,6 +298,57 @@ def test_vanilla_run_names_a_missing_file():
                 sys.argv = argv
 
 
+def test_quest_log_stride_is_checked_against_the_scene_struct():
+    """The stride has no annotation of its own; QuestLogScene's `end[0]` is the check."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_quest_log_stride_is_checked_against_the_scene_struct")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = re.sub(r"/\*0x0668\*/(\s*u16\s+end\[0\])", r"/*0x0664*/\1", text, count=1)
+        check(doctored != text, "could not doctor QuestLogScene.end for the test")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("0x668" in str(e) and "0x664" in str(e),
+                  f"refused, but the message does not name both numbers: {e}")
+        else:
+            check(False, "a stride that disagrees with QuestLogScene.end should be refused")
+
+
+def test_skill_option_writes_into_the_named_package_only():
+    """--skill sends the tables to another package and leaves the extractor's alone.
+
+    Runs a copy of the generator inside a throwaway shared/ + skills/ tree, so the
+    real skills/ directory is never written to.
+    """
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_skill_option_writes_into_the_named_package_only")
+        return
+    tools_src = os.path.join(HERE, "..", "tools")
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copytree(tools_src, os.path.join(tmp, "shared", "tools"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        ext_data = os.path.join(tmp, "skills", "frlg-save-extractor", "scripts", "data")
+        os.makedirs(ext_data)
+        with open(os.path.join(ext_data, "sentinel.txt"), "w") as f:
+            f.write("extractor table\n")
+        real_before, tmp_before = _fingerprint(DATA), _fingerprint(ext_data)
+        r = subprocess.run([sys.executable, os.path.join(tmp, "shared", "tools", "generate_tables.py"),
+                            "--game", "vanilla", "--repo", VANILLA_SRC, "--skill", "other-pkg"],
+                           capture_output=True, text=True)
+        check(r.returncode == 0, f"--skill run failed: {r.stderr.strip()[-300:]}")
+        out = os.path.join(tmp, "skills", "other-pkg", "scripts", "data", "vanilla", "save_layout.txt")
+        check(os.path.isfile(out), "tables did not land in the named package")
+        check(_fingerprint(ext_data) == tmp_before, "the extractor's data changed under --skill")
+        check(_fingerprint(DATA) == real_before, "the real extractor data changed under --skill")
+
+
 def test_zz_committed_tables_were_not_regenerated():
     """Runs last (sorted by name): the published tables must be byte-identical.
 
@@ -331,6 +383,7 @@ def test_the_warp_fields_sit_where_the_header_annotates_them():
         check(L.get("sb1_escape_warp") == 0x0024, f"{name} escapeWarp")
         check(L.get("sb1_map_layout_id") == 0x0032, f"{name} mapLayoutId")
         check(L.get("sb1_quest_log") == 0x1300, f"{name} questLog")
+        check(L.get("quest_log_scene_size") == 0x668, f"{name} quest_log_scene_size")
 
 
 def test_struct_sizes_are_generated_not_hand_written():

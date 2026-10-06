@@ -580,6 +580,19 @@ def compute_layout(repo, consts, game="frlgplus"):
         raise SystemExit(
             f"quest log span {scene_span:#x} does not divide by {count} scenes")
     layout["quest_log_scene_size"] = scene_span // count
+    # The stride has no annotation of its own, so check it against one: QuestLogScene
+    # ends with `/*0x0668*/ u16 end[0]`. A field inserted between questLog and
+    # easyChatProfile would move the span while both SaveBlock1 annotations stayed
+    # self-consistent, and the migrator would then write into the wrong bytes.
+    qs = text[text.index("struct QuestLogScene"):]
+    qs = qs[:cparse._matching_brace(qs, qs.index("{")) + 1]
+    m = re.search(r"/\*(0x[0-9A-Fa-f]+)\*/\s*u16\s+end\[0\]", qs)
+    if not m:
+        raise SystemExit("no annotated `end[0]` on struct QuestLogScene to check the stride against")
+    if int(m.group(1), 16) != layout["quest_log_scene_size"]:
+        raise SystemExit(
+            f"quest log scene stride is {layout['quest_log_scene_size']:#x} from the SaveBlock1 span "
+            f"but struct QuestLogScene is annotated {int(m.group(1), 16):#x} long")
     layout["sb1_last_heal_location"] = annotated("lastHealLocation")
     layout["sb1_party_count"] = annotated("playerPartyCount")
     layout["sb1_party"] = annotated("playerParty")
