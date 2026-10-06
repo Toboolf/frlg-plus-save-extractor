@@ -20,7 +20,7 @@ SLOT_POCKETS = {
 }
 
 
-def convert_bag(src_pockets, vanilla_L, plus_L, tables):
+def convert_bag(src_pockets, plus_L, tables):
     """Re-pocket a vanilla bag into FRLG+'s rebuilt one.
 
     Quantities are copied as stored. SaveBlock2 is never touched by the migration,
@@ -43,8 +43,9 @@ def convert_bag(src_pockets, vanilla_L, plus_L, tables):
             if dest == "tm_case":
                 bit = tm_index.get(iid)
                 if bit is None:
-                    losses.append({"kind": "pocket_full", "item": name,
-                                   "detail": "not a TM or HM FRLG+ knows"})
+                    losses.append({"kind": "unknown_item", "item": name,
+                                   "detail": "routed to the TM Case but not a TM or HM "
+                                             "FRLG+ knows"})
                     continue
                 tm_bits[bit // 8] |= 1 << (bit % 8)
                 if qty > 1:
@@ -61,7 +62,7 @@ def convert_bag(src_pockets, vanilla_L, plus_L, tables):
                     continue
                 if key_next >= len(key_bytes):
                     losses.append({"kind": "pocket_full", "item": name,
-                                   "detail": f"Key Items holds "
+                                   "detail": f"Key Items is full; it holds "
                                              f"{plus_L['bag_key_items_count']}"})
                     continue
                 key_bytes[key_next] = stored
@@ -69,8 +70,9 @@ def convert_bag(src_pockets, vanilla_L, plus_L, tables):
                 continue
 
             if dest not in SLOT_POCKETS:
-                losses.append({"kind": "pocket_full", "item": name,
-                               "detail": f"unknown destination pocket {dest!r}"})
+                losses.append({"kind": "unknown_item", "item": name,
+                               "detail": f"FRLG+ has no pocket for it (item data "
+                                         f"says {dest!r})"})
                 continue
             buckets[dest].append((iid, qty))
 
@@ -83,6 +85,7 @@ def convert_bag(src_pockets, vanilla_L, plus_L, tables):
             struct.pack_into("<HH", buf, 4 * k, iid, qty)
         for iid, qty in buckets[dest][slots:]:
             losses.append({"kind": "pocket_full", "item": tables.item_name(iid),
-                           "detail": f"FRLG+'s {dest} pocket holds {slots}"})
+                           "detail": f"this stack of {qty} did not fit: FRLG+'s "
+                                     f"{dest} pocket holds {slots}"})
         writes[off_key] = bytes(buf)
     return writes, losses
