@@ -1,0 +1,36 @@
+{
+  "_about": "Copy this to local.json (gitignored) to personalise the skill. Everything here is optional. Objects merge over verification.json key by key; a null DELETES that key, which is how you retire a `confirm_by` once you have answered it.",
+  "tracker": {
+    "_about": "Present means the skill also syncs the report into this document, following the guide named below. Remove this whole block if you just want the report.",
+    "kind": "claude-doc",
+    "title": "My Pokémon Playthrough Tracker",
+    "doc_id": "paste-your-documents-id-here",
+    "snapshot_tab": "Save snapshot",
+    "guide": "references/syncing-to-a-tracker.md"
+  },
+  "checked_against_save": {
+    "_about": "The save you last verified the report against.",
+    "file": "my_save.srm",
+    "save_counter": 0,
+    "date": "2026-01-01",
+    "note": "Where you were in the game, and what you checked."
+  },
+  "sections": {
+    "_about": "Promote a section to confirmed once you have checked it in game. See references/verification.md.",
+    "items": {
+      "evidence": "confirmed",
+      "how": "Compared every pocket against the bag in game on the date above.",
+      "confirm_by": null
+    }
+  },
+  "save_history": {
+    "_about": "Only if your save has a history that makes the report look odd — imported Pokémon, a save editor, a mid-playthrough ROM change.",
+    "origin": "",
+    "what_this_means_for_the_report": []
+  },
+  "overrides": {
+    "_about": "Escape hatches for a ROM newer than the source checkout. Prefer re-running tools/generate_tables.py.",
+    "item_names_extra": {},
+    "flag_labels": {}
+  }
+}

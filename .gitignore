@@ -1,0 +1,15 @@
+# Save files — never commit these
+*.srm
+*.sav
+*.bak-*
+
+# Personal overlay and local test denylist
+local.json
+denylist.local.txt
+
+# Build output
+dist/
+
+# Python
+__pycache__/
+*.pyc
