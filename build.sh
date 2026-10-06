@@ -16,6 +16,7 @@ VENDORED=(
 "shared/vanilla_frlg.py scripts/vanilla_frlg.py"
 "shared/tools/generate_tables.py tools/generate_tables.py"
 "shared/tools/cparse.py tools/cparse.py"
+"shared/tools/generate_remaps.py tools/generate_remaps.py"
 "shared/tools/display_names.json tools/display_names.json"
 )
 

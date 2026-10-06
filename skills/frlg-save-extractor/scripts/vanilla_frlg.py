@@ -11,6 +11,8 @@ decode_box_padding reports nothing: a zero there means "never written", not
 """
 from __future__ import annotations
 
+import os
+
 NAME = "vanilla FR/LG"
 LAYOUT = "vanilla/save_layout.txt"
 MAX_SPECIES = 412          # SPECIES_EGG; vanilla has no extended dex slots
@@ -23,3 +25,29 @@ def decode_box_padding(packed):          # noqa: ARG001 - padding carries nothin
 def boxed_hp_fields(padding, calc_modes):  # noqa: ARG001
     return {"hp_current": None, "status": "not recorded", "box_hp_recorded": False,
             "status_source": "this game leaves that halfword as padding"}
+
+
+def remap_rows(data_dir, filename):
+    """(vanilla value, FRLG+ value, name) per row, with tuples for the two-column maps."""
+    path = os.path.join(data_dir, "vanilla", filename)
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = line.rstrip("\n").split("|")
+            if filename == "remap_maps.txt":
+                out.append(((int(parts[0]), int(parts[1])),
+                            (int(parts[2]), int(parts[3])), parts[4]))
+            else:
+                out.append((int(parts[0], 0), int(parts[1], 0), parts[2]))
+    return out
+
+
+def remaps(data_dir):
+    """Everything a vanilla ID has to be translated through, keyed by what it is."""
+    return {
+        "maps": {v: f for v, f, _ in remap_rows(data_dir, "remap_maps.txt")},
+        "layouts": {v: f for v, f, _ in remap_rows(data_dir, "remap_layouts.txt")},
+        "mapsec": {v: f for v, f, _ in remap_rows(data_dir, "remap_mapsec.txt")},
+    }

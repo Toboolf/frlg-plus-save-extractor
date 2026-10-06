@@ -7,7 +7,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULES = ["test_extractor.py", "test_local_overlay.py", "test_no_personal_data.py",
            "test_vendored_copies_match.py", "test_profiles.py",
-           "test_vanilla_layout.py"]
+           "test_vanilla_layout.py", "test_remaps.py"]
 
 
 def main():
