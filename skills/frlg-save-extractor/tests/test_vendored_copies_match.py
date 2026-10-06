@@ -40,7 +40,12 @@ def vendored_map(build_sh):
 
 def main():
     build_sh = os.path.join(REPO, "build.sh")
-    if not os.path.isfile(build_sh) or not os.path.exists(os.path.join(REPO, ".git")):
+    pairs = None
+    in_source_repo = False
+    if os.path.isdir(os.path.join(REPO, "shared")) and os.path.isfile(build_sh):
+        with open(build_sh, encoding="utf-8") as f:
+            in_source_repo = "VENDORED=(" in f.read()
+    if not in_source_repo:
         print("standalone install: no shared/ to compare against — nothing to check")
         return 0
     pairs = vendored_map(build_sh)
@@ -57,7 +62,10 @@ def main():
             want = f.read()
         for skill in sorted(os.listdir(os.path.join(REPO, "skills"))):
             copy = os.path.join(REPO, "skills", skill, dst)
+            if not os.path.isdir(os.path.dirname(copy)):
+                continue  # this package does not vendor into that directory
             if not os.path.isfile(copy):
+                FAILS.append(f"skills/{skill}/{dst} is missing — run ./build.sh")
                 continue
             with open(copy, "rb") as f:
                 got = f.read()
