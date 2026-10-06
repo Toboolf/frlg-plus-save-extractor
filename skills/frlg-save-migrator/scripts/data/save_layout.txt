@@ -53,6 +53,7 @@ sb1_last_viewed_pokedex_entry|1586|0x632
 sb1_key_flags|1588|0x634
 sb1_master_trainer_title|1585|0x631
 sb1_master_trainer_flags|15040|0x3AC0
+sb1_filler_easy_chat|12120|0x2F58
 num_flag_bytes|288|0x120
 flags_count|2304|0x900
 vars_count|256|0x100

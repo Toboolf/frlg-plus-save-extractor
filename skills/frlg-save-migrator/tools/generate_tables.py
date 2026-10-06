@@ -600,6 +600,7 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb1_vars"] = annotated("vars")
     layout["sb1_game_stats"] = annotated("gameStats")
     daycare_mon_size = annotated("unused_3D24") - annotated("route5DayCareMon")
+    easy_chat = None
     if game == "vanilla":
         # The vanilla /*0x2F80*/ annotation on `daycare` is correct there.
         daycare = annotated("daycare")
@@ -607,7 +608,14 @@ def compute_layout(repo, consts, game="frlgplus"):
         # The /*0x2F80*/ comment on `daycare` is a vanilla leftover: FRLG+ replaced
         # dewfordTrends[5] (40 bytes) with filler_EasyChatPairs[36], moving the Day Care
         # down by 4. Walk it instead and check it lands on giftRibbons.
-        daycare = annotated("filler_oldMan") + 64 + 36
+        #
+        # filler_EasyChatPairs' own /*0x2F54*/ comment is stale for the same reason —
+        # it is vanilla's dewfordTrends offset, and it would put filler_oldMan[64] only
+        # 60 bytes from the field after it. Walk past filler_oldMan instead. Both u8
+        # arrays, so no padding: the walk below checks the 36 lands exactly on daycare,
+        # which the giftRibbons check in turn pins.
+        easy_chat = annotated("filler_oldMan") + 64
+        daycare = easy_chat + 36
     # offspringPersonality is u16 in vanilla and u32 in FRLG+; read which from the source.
     m = re.search(r"struct DayCare\s*\{[^}]*?\bu(16|32)\s+offspringPersonality", text)
     if not m:
@@ -634,6 +642,12 @@ def compute_layout(repo, consts, game="frlgplus"):
     if game != "vanilla":        # Master Trainers is an FRLG+ addition
         layout["sb1_master_trainer_title"] = annotated("filler_062C") + 5
         layout["sb1_master_trainer_flags"] = annotated("unused_3A94") + 44
+    if game != "vanilla":
+        # filler_EasyChatPairs replaces vanilla's dewfordTrends[5]; the field does not
+        # exist in vanilla at all, where that space is dewfordTrends. A migration zeroes
+        # it rather than inherit whatever a vanilla save left there. Its length is the
+        # distance to the Day Care, which is why no separate size key is needed.
+        layout["sb1_filler_easy_chat"] = easy_chat
     layout["num_flag_bytes"] = consts["FLAGS_COUNT"] // 8
     layout["flags_count"] = consts["FLAGS_COUNT"]
     layout["vars_count"] = consts["VARS_COUNT"]

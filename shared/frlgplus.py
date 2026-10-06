@@ -21,6 +21,7 @@ from __future__ import annotations
 import sys
 import traceback
 
+import gen3core
 from gen3core import (HM_MOVES, NATURES, SECTOR_DATA_SIZE, choose_slot, decode_pokemon, decode_text,
                       nature_effect, quick_valid_boxmon, to_display, u16, u32, s16)
 
@@ -56,6 +57,17 @@ def encode_box_padding(box_hp, box_status, forme):
         if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= limit:
             raise ValueError(f"{name}={value!r} does not fit FRLG+'s field (0..{limit})")
     return box_hp | (box_status << 10) | (forme << 14)
+
+
+def write_box_padding(mon80, *, box_hp, box_status=0, forme=0):
+    """Set FRLG+'s boxHP, boxStatus and forme on one Pokemon.
+
+    The bit layout is this profile's (encode_box_padding); the decrypt, checksum
+    and re-encrypt are the core's. Nothing that writes that halfword should carry
+    its own copy of either half.
+    """
+    return gen3core.rewrite_substructures(
+        mon80, g_halfword=encode_box_padding(box_hp, box_status, forme))
 
 
 def box_status_name(box_status, box_hp):

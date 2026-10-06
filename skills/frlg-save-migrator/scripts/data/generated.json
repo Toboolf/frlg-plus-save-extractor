@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06 16:21 UTC",
+ "generated_at": "2026-10-06 20:31 UTC",
  "repo_name": "FRLG-Plus",
  "repo_commit": "f198fb944",
  "rows": {
@@ -16,7 +16,7 @@
   "extended_dex": 246,
   "encounters": 2053,
   "key_item_indices": 59,
-  "save_layout": 89
+  "save_layout": 90
  },
  "save_layout": {
   "sb1_money": "0x290",
@@ -69,6 +69,7 @@
   "sb1_key_flags": "0x634",
   "sb1_master_trainer_title": "0x631",
   "sb1_master_trainer_flags": "0x3AC0",
+  "sb1_filler_easy_chat": "0x2F58",
   "num_flag_bytes": "0x120",
   "flags_count": "0x900",
   "vars_count": "0x100",

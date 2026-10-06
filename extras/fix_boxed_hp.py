@@ -33,8 +33,8 @@ REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_DIR, "skills", "frlg-save-extractor", "scripts"))
 
 import frlgplus  # noqa: E402
-from gen3core import (SECTOR_DATA_SIZE, SUB_ORDERS, Tables, decode_pokemon,  # noqa: E402
-                      read_slot, u32)
+from gen3core import (SECTOR_DATA_SIZE, Tables, decode_pokemon,  # noqa: E402
+                      decrypt_substructures, read_slot, u16)
 
 SECTOR_SIZE = 0x1000
 SECTORS_PER_SLOT = 14
@@ -82,26 +82,15 @@ def verify_all_checksums(raw, sizes):
 def set_box_hp(mon80, box_hp, box_status=0):
     """Return a new 80-byte BoxPokemon with boxHP/boxStatus replaced.
 
-    Decrypts the substructures, edits substructure G's last halfword, recomputes
-    the 16-bit checksum over the plaintext and re-encrypts — exactly the order the
-    game's own accessors use.
+    The decrypt / edit / re-checksum / re-encrypt is frlgplus.write_box_padding by
+    way of gen3core.rewrite_substructures — the profile owns the bit layout and the
+    core owns the crypto, so this tool carries neither. The forme bits are read back
+    first and written unchanged: this tool only ever fills in a missing HP.
     """
-    b = bytearray(mon80)
-    pid, otid = u32(b, 0), u32(b, 4)
-    key = pid ^ otid
-    dec = bytearray(48)
-    for i in range(0, 48, 4):
-        struct.pack_into("<I", dec, i, u32(b, 32 + i) ^ key)
-    g_index = SUB_ORDERS[pid % 24].index("G")
-    packed = struct.unpack_from("<H", dec, g_index * 12 + 10)[0]
-    forme = frlgplus.decode_box_padding(packed)["forme"]   # keep the forme bits untouched
-    # The profile owns this bit layout; this tool must not carry its own copy.
-    new = frlgplus.encode_box_padding(box_hp, box_status, forme)
-    struct.pack_into("<H", dec, g_index * 12 + 10, new)
-    struct.pack_into("<H", b, 0x1C, sum(struct.unpack("<24H", dec)) & 0xFFFF)
-    for i in range(0, 48, 4):
-        struct.pack_into("<I", b, 32 + i, struct.unpack_from("<I", dec, i)[0] ^ key)
-    return bytes(b)
+    subs, _calc = decrypt_substructures(mon80)
+    forme = frlgplus.decode_box_padding(u16(subs["G"], 10))["forme"]
+    return frlgplus.write_box_padding(mon80, box_hp=box_hp, box_status=box_status,
+                                      forme=forme)
 
 
 def main():

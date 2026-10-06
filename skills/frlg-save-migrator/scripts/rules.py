@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import struct
 
+import frlgplus
+import gen3core
+from gen3core import u16
+
 # Which FRLG+ ItemSlot pocket each item-data pocket name maps to, and the layout
 # keys naming its offset and slot count. tm_case and key_items are not ItemSlot
 # arrays and are handled on their own.
@@ -89,3 +93,167 @@ def convert_bag(src_pockets, plus_L, tables):
                                      f"{dest} pocket holds {slots}"})
         writes[off_key] = bytes(buf)
     return writes, losses
+
+
+# ---------------------------------------------------------------- rule 2: daycare
+def convert_daycare(src_sb1, vanilla_L, plus_L):
+    """Re-pack the Day Care. The two stored Pokemon are byte-identical structures;
+    only offspringPersonality widens from u16 to u32, which is what moved the
+    whole struct 4 bytes earlier in FRLG+."""
+    span = vanilla_L["daycare_mon_size"] * vanilla_L["daycare_mon_count"]
+    mons = src_sb1[vanilla_L["sb1_daycare"]:vanilla_L["sb1_daycare"] + span]
+    offspring = u16(src_sb1, vanilla_L["sb1_daycare_offspring"])
+    step = src_sb1[vanilla_L["sb1_daycare_step_counter"]]
+    return {"sb1_daycare": mons,
+            "sb1_daycare_offspring": struct.pack("<I", offspring),
+            "sb1_daycare_step_counter": bytes([step])}
+
+
+# ------------------------------------------- rules 3 and 4 (per Pokemon), together
+MAX_LEGAL_BOX_HP = 0x3FF
+DEOXYS_FORME_BY_VERSION = {"fr": 1, "lg": 2}      # Attack in FireRed, Defense in LeafGreen
+
+
+def convert_mons(src, plus_L, tables, *, source_version):
+    """Write boxHP/boxStatus/forme and remap metLocation, one decrypt per Pokemon.
+
+    Returns (out, skipped, decisions). `out["party"]` and `out["boxes"]` mirror the
+    source's shape, with None for an empty slot and the ORIGINAL bytes for any slot
+    that was skipped, so a writer can index either by PHYSICAL slot. Nothing is ever
+    compacted: shifting a party slot would hand the game a different party.
+    """
+    if source_version not in DEOXYS_FORME_BY_VERSION:
+        raise ValueError(f"source_version must be 'fr' or 'lg', got {source_version!r}")
+    remaps = src["remaps"]
+    skipped, decisions = [], []
+
+    def one(mon, raw80):
+        if mon is None:
+            return None
+        where = mon.get("where", "?")
+        label = f"{where}: {mon.get('nickname') or mon.get('species')}"
+        if mon.get("is_egg"):
+            skipped.append(f"{label} — egg, left untouched")
+            return raw80
+        if mon["checks"]["checksum"] != "ok":
+            skipped.append(f"{label} — substructure checksum failed, left untouched")
+            return raw80
+        max_hp = (mon.get("stats") or {}).get("HP")
+        if not max_hp:
+            skipped.append(f"{label} — no max HP could be computed, left untouched")
+            return raw80
+        forme = 0
+        if mon.get("species") == "Deoxys":
+            forme = DEOXYS_FORME_BY_VERSION[source_version]
+            decisions.append(f"{label} — Deoxys forme set to "
+                             f"{gen3core.DEOXYS_FORMES[forme]} for a "
+                             f"{'FireRed' if source_version == 'fr' else 'LeafGreen'} "
+                             f"source")
+        old_loc = mon["origin"]["met_location_id"]
+        new_loc = remaps["mapsec"].get(old_loc)
+        if new_loc is None:
+            new_loc = old_loc          # METLOC specials and anything with no row
+        return gen3core.rewrite_substructures(
+            raw80,
+            g_halfword=frlgplus.encode_box_padding(
+                min(max_hp, MAX_LEGAL_BOX_HP), 0, forme),
+            met_location=new_loc)
+
+    party = [one(m, src["party_raw"][i]) for i, m in enumerate(src["party"])]
+    boxes = [[one(m, src["boxes_raw"][bx][sl]) for sl, m in enumerate(row)]
+             for bx, row in enumerate(src["boxes"])]
+    return {"party": party, "boxes": boxes}, skipped, decisions
+
+
+# ------------------------------------------------------- rule 4 (SaveBlock1 fields)
+WARP_KEYS = ("sb1_location", "sb1_continue_game_warp", "sb1_dynamic_warp",
+             "sb1_last_heal_location", "sb1_escape_warp")
+
+
+def remap_ids(src_sb1, vanilla_L, plus_L, remaps):
+    """Rewrite every stored map, layout and quest-log id. Offsets are identical in
+    both layouts for all of these, so only the VALUES change."""
+    writes, notes = {}, []
+    for key in WARP_KEYS:
+        off = vanilla_L[key]
+        group, num = src_sb1[off], src_sb1[off + 1]
+        rest = src_sb1[off + 2:off + 8]
+        new = remaps["maps"].get((group, num))
+        if new is None:
+            notes.append(f"{key}: map ({group}, {num}) has no remap row; left as is")
+            new = (group, num)
+        writes[key] = bytes([new[0] & 0xFF, new[1] & 0xFF]) + rest
+
+    old_layout = u16(src_sb1, vanilla_L["sb1_map_layout_id"])
+    new_layout = remaps["layouts"].get(old_layout)
+    if new_layout is None:
+        notes.append(f"mapLayoutId {old_layout} has no remap row "
+                     f"(vanilla's empty layout slots have none); left as is")
+        new_layout = old_layout
+    writes["sb1_map_layout_id"] = struct.pack("<H", new_layout)
+
+    stride, count = vanilla_L["quest_log_scene_size"], vanilla_L["quest_log_scene_count"]
+    base = vanilla_L["sb1_quest_log"]
+    scenes = bytearray(src_sb1[base:base + stride * count])
+    for i in range(count):
+        o = i * stride
+        group, num = scenes[o + 1], scenes[o + 2]
+        if (group, num) == (0, 0):
+            continue
+        new = remaps["maps"].get((group, num))
+        if new is None:
+            notes.append(f"quest log scene {i}: map ({group}, {num}) has no remap row")
+            continue
+        scenes[o + 1], scenes[o + 2] = new[0] & 0xFF, new[1] & 0xFF
+    writes["sb1_quest_log"] = bytes(scenes)
+
+    # Spec 7: saved object-event state belongs to the map the player is standing
+    # on. If FRLG+ changed that map's object list, say so — it is the residual
+    # risk the skill cannot fix, only report.
+    here = (src_sb1[vanilla_L["sb1_location"]], src_sb1[vanilla_L["sb1_location"] + 1])
+    name = next((n for n, (a, _b) in remaps.get("maps_by_name", {}).items()
+                 if a == here), None)
+    changed = remaps.get("object_counts", {})
+    if name and name in changed:
+        a, b = changed[name]
+        notes.append(f"the saved map {name} has {a} object events in vanilla and "
+                     f"{b} in FRLG+, so saved object state for it may not line up "
+                     f"(converting from a Pokemon Center or the player's bedroom "
+                     f"avoids this)")
+    return writes, notes
+
+
+# ------------------------------------------------------------- rule 5: key flags
+def build_key_flags(source_version):
+    """struct KeySystemFlags: difficulty:2, version:1, nuzlocke:1, ivCalcMode:2,
+    evCalcMode:1, noPMC:1, expMod:2, padding:4, changedCalcMode:1, inKeySystemMenu:1.
+
+    Everything defaults to 0 except expMod, which new_game.c:157 sets to 2. A
+    zero-filled word means expMod == 0, which battle_script_commands.c:3249 reads
+    as no EXP, ever — a save where nothing ever levels.
+    """
+    if source_version not in ("fr", "lg"):
+        raise ValueError(f"source_version must be 'fr' or 'lg', got {source_version!r}")
+    return (2 << 8) | ((1 if source_version == "lg" else 0) << 2)
+
+
+# -------------------------------------------------- rule 6: zero the carved regions
+def zeroed_regions(plus_L):
+    """FRLG+ reads these from space vanilla leaves as filler, so a vanilla save's
+    bytes there must not be inherited as if they were FRLG+ data.
+
+    The three array lengths (52, 20, 36) are literals because the generated layout
+    emits each region's OFFSET but not its length. tests/test_rules.py pins each one
+    against what the header's own arithmetic forces — the distance to the field that
+    follows it, or the number of bits the Master Trainer bitfield has to hold — so a
+    size that drifted out of step with the source would fail there rather than
+    silently zero the wrong span.
+    """
+    leftover = plus_L["sb1_item_block_end"] - (plus_L["sb1_bag_held_items"]
+                                               + 4 * plus_L["bag_held_items_count"])
+    return {"sb1_master_trainer_title": bytes(1),
+            "sb1_last_viewed_pokedex_entry": bytes(2),
+            "sb1_nuzlocke_dupe_flags": bytes(52),
+            "sb1_master_trainer_flags": bytes(20),
+            "sb1_filler_easy_chat": bytes(36),
+            "__leftover_item_slots": bytes(leftover)}
