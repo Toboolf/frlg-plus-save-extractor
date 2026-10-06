@@ -50,6 +50,10 @@ def layout_order(repo):
 
 
 def layout_ids(repo, offset):
+    # Empty `{}` entries consume an ID: the decomp's tools/mapjson/mapjson.cpp,
+    # generate_layouts_constants_text, does `i++` outside the `if` that skips the
+    # #define, and generate_layouts_table_text emits NULL for an empty entry. So the
+    # ID is position + offset, and skipping empties would shift every later ID.
     return {name: i + offset for i, name in enumerate(layout_order(repo)) if name}
 
 

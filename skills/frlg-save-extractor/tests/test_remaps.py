@@ -104,6 +104,21 @@ def test_pair_up_counts_moved_rows():
                                    lambda gn: [gn[0], gn[1]])
     check(rows == [[0, 0, 0, 0, "A"], [0, 1, 0, 2, "B"]], f"unexpected rows {rows}")
 
+def test_layout_ids_count_empty_slots():
+    """Vanilla layouts.json has empty {} slots, and they consume layout IDs.
+
+    LAYOUT_BATTLE_COLOSSEUM_2P is 47 in vanilla because the 11 empty entries before
+    it count; numbering that skipped empties would give 36 here, which is its FRLG+ id.
+    """
+    rows = {name: (v, f) for v, f, name in vanilla_frlg.remap_rows(DATA_DIR, "remap_layouts.txt")}
+    check(rows.get("LAYOUT_BATTLE_COLOSSEUM_2P") == (47, 36),
+          f"LAYOUT_BATTLE_COLOSSEUM_2P should be 47 -> 36, got {rows.get('LAYOUT_BATTLE_COLOSSEUM_2P')}")
+    # One assertion that tells the two rules apart: with empties skipped the highest
+    # vanilla id could not exceed the number of named layouts.
+    highest = max(v for v, _ in rows.values())
+    check(highest > len(rows),
+          f"highest vanilla layout id {highest} does not exceed the {len(rows)} named layouts")
+
 
 def main():
     for name, fn in sorted(globals().items()):
