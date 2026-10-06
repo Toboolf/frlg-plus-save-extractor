@@ -69,7 +69,7 @@ def test_local_json_must_be_an_object():
     with open(os.path.join(target, "local.json"), "w", encoding="utf-8") as f:
         json.dump(["not", "an", "object"], f)
     try:
-        Tables(target)
+        Tables(target, layout=frlgplus.LAYOUT)
         check(False, "a non-object local.json must raise an error")
     except Exception as e:  # noqa: BLE001 - any exception type is fine, the message is what matters
         check("local.json" in str(e), f"error must name local.json, got: {e}")
@@ -80,14 +80,14 @@ def test_local_json_malformed():
     with open(os.path.join(target, "local.json"), "w", encoding="utf-8") as f:
         f.write("{not valid json")
     try:
-        Tables(target)
+        Tables(target, layout=frlgplus.LAYOUT)
         check(False, "malformed local.json must raise an error")
     except Exception as e:  # noqa: BLE001 - any exception type is fine, the message is what matters
         check("local.json" in str(e), f"error must name local.json, got: {e}")
 
 
 def test_without_overlay():
-    tables = Tables(temp_data())
+    tables = Tables(temp_data(), layout=frlgplus.LAYOUT)
     check(tables.has_local is False, "has_local must be False with no local.json")
     sections = tables.verification["sections"]
     odd = {k: v["evidence"] for k, v in sections.items() if v["evidence"] != "source"}
@@ -106,7 +106,7 @@ OVERLAY = {
 
 
 def test_with_overlay():
-    tables = Tables(temp_data(OVERLAY))
+    tables = Tables(temp_data(OVERLAY), layout=frlgplus.LAYOUT)
     check(tables.has_local is True, "has_local must be True when local.json exists")
     items = tables.verification["sections"]["items"]
     check(items["evidence"] == "confirmed", f"overlay must win, got {items['evidence']}")
@@ -120,10 +120,10 @@ def test_with_overlay():
 def test_extraction_reports_the_overlay():
     from test_extractor import assemble, build_save
     raw = assemble(build_save(0), 41)
-    plain = frlgplus.extract(raw, Tables(temp_data()), source_name="t.srm")
+    plain = frlgplus.extract(raw, Tables(temp_data(), layout=frlgplus.LAYOUT), source_name="t.srm")
     check(plain["verification"]["personal"] is False, "personal must be False with no overlay")
     check(plain["verification"]["tracker"] is None, "tracker must be None with no overlay")
-    personal = frlgplus.extract(raw, Tables(temp_data(OVERLAY)), source_name="t.srm")
+    personal = frlgplus.extract(raw, Tables(temp_data(OVERLAY), layout=frlgplus.LAYOUT), source_name="t.srm")
     check(personal["verification"]["personal"] is True, "personal must be True with an overlay")
     check(personal["verification"]["tracker"]["doc_id"] == "abc-123",
           "the extraction result must carry the tracker block")

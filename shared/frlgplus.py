@@ -43,6 +43,21 @@ def decode_box_padding(packed):
             "forme": (packed >> 14) & 3}
 
 
+def encode_box_padding(box_hp, box_status, forme):
+    """The exact inverse of decode_box_padding: boxHP:10, boxStatus:4, forme:2.
+
+    This profile owns the bit layout, so anything that *writes* that halfword
+    (extras/fix_boxed_hp.py, and the migrator later) goes through here rather
+    than carrying its own copy of the shifts. Values out of range are refused
+    instead of being silently truncated into a neighbouring field.
+    """
+    for name, value, limit in (("box_hp", box_hp, 0x3FF), ("box_status", box_status, 0xF),
+                               ("forme", forme, 3)):
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= limit:
+            raise ValueError(f"{name}={value!r} does not fit FRLG+'s field (0..{limit})")
+    return box_hp | (box_status << 10) | (forme << 14)
+
+
 def box_status_name(box_status, box_hp):
     """FRLG+ packs the ailment into 4 bits: 0 none, 1-7 asleep turns, 8-11 PSN/BRN/FRZ/PRZ."""
     if box_status == 0:

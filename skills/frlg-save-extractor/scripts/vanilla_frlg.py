@@ -15,7 +15,8 @@ import os
 
 NAME = "vanilla FR/LG"
 LAYOUT = "vanilla/save_layout.txt"
-MAX_SPECIES = 412          # SPECIES_EGG; vanilla has no extended dex slots
+MAX_SPECIES = 439          # NUM_SPECIES (412) plus the 27 Unown letter slots, same as FRLG+:
+                           # vanilla defines SPECIES_UNOWN_B..QMARK as NUM_SPECIES + 1..27 too
 
 
 def decode_box_padding(packed):          # noqa: ARG001 - padding carries nothing

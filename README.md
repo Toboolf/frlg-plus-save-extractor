@@ -86,18 +86,33 @@ belong to the pocket it was decoded from, with a quantity between 1 and 999.
 
 ## Regenerating the tables
 
-If FRLG+ updates and the generated tables fall behind:
+Three generator runs produce everything under `skills/frlg-save-extractor/scripts/data/`,
+and they do not all go stale at the same time:
+
+| run | writes | re-run when |
+|---|---|---|
+| `generate_tables.py --repo ../FRLG-Plus` | `scripts/data/*.txt` and `scripts/data/generated.json` — the FRLG+ names, offsets, flags and encounter tables | FRLG+ releases a new version |
+| `generate_tables.py --game vanilla --repo ../pokefirered` | `scripts/data/vanilla/save_layout.txt` and `scripts/data/vanilla/generated.json` — the offsets a *vanilla* FR/LG save is read with | the `pokefirered` checkout moves, or a new save-layout key is added |
+| `generate_remaps.py --vanilla ../pokefirered --frlgplus ../FRLG-Plus` | `scripts/data/vanilla/remap_maps.txt`, `remap_layouts.txt` and `remap_mapsec.txt` — the vanilla → FRLG+ map, layout and map-section ID translations | *either* checkout moves, since the IDs are paired up by name across both trees |
+
+Both of the last two need a [pret/pokefirered](https://github.com/pret/pokefirered) checkout
+as well as the FRLG+ one. Regenerating only the FRLG+ tables leaves everything under
+`scripts/data/vanilla/` untouched and therefore silently stale, so after an FRLG+ version
+bump run all three:
 
 ```bash
 git clone https://github.com/Deokishisu/FRLG-Plus ../FRLG-Plus
+git clone https://github.com/pret/pokefirered ../pokefirered
 python3 shared/tools/generate_tables.py --repo ../FRLG-Plus
+python3 shared/tools/generate_tables.py --game vanilla --repo ../pokefirered
+python3 shared/tools/generate_remaps.py --vanilla ../pokefirered --frlgplus ../FRLG-Plus
 ./build.sh
 python3 skills/frlg-save-extractor/tests/run_all.py
 ```
 
-Run the generator from `shared/tools/`, not from the skill's copy: `shared/` is the original
-and the skill copies are generated, so an edit made to the copy is overwritten by the next
-`./build.sh`.
+Run the generators from `shared/tools/`, not from the skill's copies in
+`skills/frlg-save-extractor/tools/`: `shared/` is the original and the skill copies are
+generated, so an edit made to a copy is overwritten by the next `./build.sh`.
 
 ## Running the tests
 

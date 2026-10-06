@@ -37,7 +37,7 @@ def main():
     if len(raw) < 0x1C000:
         sys.exit(f"File is only {len(raw):,} bytes — a FireRed save should be 128 KB (131,072 bytes).")
 
-    tables = Tables()
+    tables = Tables(layout=frlgplus.LAYOUT)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     res = frlgplus.extract(raw, tables, source_name=os.path.basename(args.save))
     compact = report.make_compact(res, now)

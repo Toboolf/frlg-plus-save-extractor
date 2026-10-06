@@ -20,7 +20,29 @@ VENDORED=(
 "shared/tools/display_names.json tools/display_names.json"
 )
 
+usage() {
+  cat >&2 <<'USAGE'
+usage: ./build.sh [--check]
+  (no argument)  vendor shared/ into each skill package, then build every skill
+  --check        verify the vendored copies are current; change nothing, exit 1 if stale
+USAGE
+}
+
+# --check is advertised as read-only and build-personal.sh depends on that, so an
+# argument that is not exactly --check must not fall through to a full build
+# (which would copy every vendored file and rm -rf dist).
+if [ "$#" -gt 1 ]; then
+  echo "build.sh: too many arguments: $*" >&2
+  usage
+  exit 2
+fi
 CHECK_ONLY=${1:-}
+if [ -n "$CHECK_ONLY" ] && [ "$CHECK_ONLY" != "--check" ]; then
+  echo "build.sh: unknown argument: $CHECK_ONLY" >&2
+  usage
+  exit 2
+fi
+
 stale=0
 for pair in "${VENDORED[@]}"; do
   set -- $pair

@@ -7,6 +7,8 @@ These offsets are the ones the migrator will read a vanilla save with, so they
 are pinned here against the values the vanilla bag layout forces: four-byte
 ItemSlots, pockets in vanilla's order, and nothing where FRLG+ put its bitfield.
 """
+import contextlib
+import hashlib
 import os
 import re
 import shutil
@@ -30,6 +32,50 @@ FAILS = []
 def check(cond, msg):
     if not cond:
         FAILS.append(msg)
+
+
+DATA = os.path.join(HERE, "..", "scripts", "data")
+
+
+def _fingerprint(root):
+    """Content hash of every file under root, so "unchanged" means bytes, not mtimes."""
+    h = hashlib.sha256()
+    for base, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(base, name)
+            h.update(os.path.relpath(path, root).encode())
+            with open(path, "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()
+
+
+DATA_BEFORE = _fingerprint(DATA)
+
+
+@contextlib.contextmanager
+def generator_output_redirected():
+    """Point generate_tables' output at a temp directory for the duration.
+
+    Two tests below call main() with a doctored --repo. Today main() refuses on
+    the REQUIRED check before it writes anything, but that check is the only
+    thing standing between these tests and the committed, published tables under
+    scripts/data/ — and nothing else in the suite would notice them being
+    regenerated from empty header files, because the data is not vendored.
+
+    main() derives OUT_DIR from DATA_DIR, so DATA_DIR is the lever. Both globals
+    are restored in a finally, so a failing or raising test can never leave the
+    generator aimed at a temp directory that is about to be deleted.
+    """
+    saved_data, saved_out = generate_tables.DATA_DIR, generate_tables.OUT_DIR
+    with tempfile.TemporaryDirectory() as out:
+        generate_tables.DATA_DIR = out
+        generate_tables.OUT_DIR = out
+        try:
+            yield out
+        finally:
+            generate_tables.DATA_DIR = saved_data
+            generate_tables.OUT_DIR = saved_out
 
 
 V = Tables(layout=vanilla_frlg.LAYOUT).layout
@@ -159,7 +205,8 @@ def test_unit_required_check_names_the_missing_file():
         argv = sys.argv
         sys.argv = ["generate_tables.py", "--game", "vanilla", "--repo", tmp]
         try:
-            generate_tables.main()
+            with generator_output_redirected():
+                generate_tables.main()
         except SystemExit as e:
             msg = str(e)
             print(f"  missing-file refusal: {msg}")
@@ -171,6 +218,8 @@ def test_unit_required_check_names_the_missing_file():
             check(False, "generator ran despite the missing file")
         finally:
             sys.argv = argv
+    check(generate_tables.DATA_DIR == os.path.join(generate_tables.SKILL_DIR, "scripts", "data"),
+          f"the redirect leaked: DATA_DIR is now {generate_tables.DATA_DIR}")
 
 
 # The generator tests below need a real pret/pokefirered checkout to copy from.
@@ -234,7 +283,8 @@ def test_vanilla_run_names_a_missing_file():
             argv = sys.argv
             sys.argv = ["generate_tables.py", "--game", "vanilla", "--repo", tmp]
             try:
-                generate_tables.main()
+                with generator_output_redirected():
+                    generate_tables.main()
             except SystemExit as e:
                 msg = str(e)
                 check(msg.endswith(f"is missing {rel}, which --game vanilla needs"),
@@ -245,6 +295,17 @@ def test_vanilla_run_names_a_missing_file():
                 check(False, f"{rel}: generator ran despite the missing file")
             finally:
                 sys.argv = argv
+
+
+def test_zz_committed_tables_were_not_regenerated():
+    """Runs last (sorted by name): the published tables must be byte-identical.
+
+    Compares contents, not mtimes, so a regeneration that happens to produce the
+    same bytes is fine and one that does not is caught.
+    """
+    check(_fingerprint(DATA) == DATA_BEFORE,
+          f"{DATA} changed while the suite ran — a generator test wrote to the "
+          f"committed tables instead of a temp directory")
 
 
 def main():

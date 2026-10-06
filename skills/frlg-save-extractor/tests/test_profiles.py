@@ -34,6 +34,42 @@ def test_frlgplus_decodes_the_padding():
     check(frlgplus.box_status_name(3, 294) == "asleep (3 turns)", "status 3 should be asleep")
 
 
+def test_encode_box_padding_round_trips():
+    """Important 5: the writer's bit layout is the reader's, including the edges.
+
+    extras/fix_boxed_hp.py (and the migrator later) must write this halfword
+    through the profile, not with its own shifts, so a change to one side can
+    never go unnoticed by the other.
+    """
+    formes = (0, 1, 2, 3)
+    hps = (0, 1, 100, 294, 714, 1022, 1023)
+    statuses = (0, 1, 7, 8, 9, 11, 15)
+    for box_hp in hps:
+        for box_status in statuses:
+            for forme in formes:
+                packed = frlgplus.encode_box_padding(box_hp, box_status, forme)
+                check(0 <= packed <= 0xFFFF, f"packed {packed} is not a halfword")
+                got = frlgplus.decode_box_padding(packed)
+                want = {"box_hp": box_hp, "box_status": box_status, "forme": forme}
+                check(got == want, f"round trip {want} -> {packed:#06x} -> {got}")
+    # the layout itself, spelled out once so a silent shift change is caught
+    check(frlgplus.encode_box_padding(294, 9, 1) == (294 | (9 << 10) | (1 << 14)),
+          "encode_box_padding does not match boxHP:10, boxStatus:4, forme:2")
+    check(frlgplus.encode_box_padding(1023, 15, 3) == 0xFFFF,
+          "all fields at maximum should fill the halfword")
+
+
+def test_encode_box_padding_refuses_out_of_range():
+    """Truncating silently is how a 1024 HP would land in box_status instead."""
+    for args in ((1024, 0, 0), (-1, 0, 0), (0, 16, 0), (0, -1, 0), (0, 0, 4), (0, 0, -1)):
+        try:
+            frlgplus.encode_box_padding(*args)
+        except ValueError:
+            pass
+        else:
+            FAILS.append(f"encode_box_padding{args} should have been refused")
+
+
 def test_frlgplus_boxed_hp_fields_are_pinned():
     on = frlgplus.boxed_hp_fields({"box_hp": 100, "box_status": 9, "forme": 0}, {"no_free_heals": True})
     check(on == {"hp_current": 100, "status": "burned", "box_hp_recorded": True,
@@ -54,16 +90,52 @@ def test_frlgplus_boxed_hp_fields_are_pinned():
 
 
 def test_max_species_tracks_the_generated_layout():
-    n = gen3core.Tables(layout=frlgplus.LAYOUT).layout["num_species"]
-    check(frlgplus.MAX_SPECIES == n + 27, f"MAX_SPECIES {frlgplus.MAX_SPECIES} != num_species {n} + 27")
+    """Both profiles: MAX_SPECIES is num_species plus the 27 Unown letter slots.
+
+    Vanilla defines SPECIES_UNOWN_B..QMARK as NUM_SPECIES + 1..27 exactly as FRLG+
+    does, so the ceiling is the same in both trees and neither number is hand-held.
+    """
+    for p in (frlgplus, vanilla_frlg):
+        n = gen3core.Tables(layout=p.LAYOUT).layout["num_species"]
+        check(p.MAX_SPECIES == n + 27,
+              f"{p.__name__}.MAX_SPECIES {p.MAX_SPECIES} != num_species {n} + 27")
 
 
 def test_decode_pokemon_requires_a_profile():
+    """A real Tables, so the TypeError can only be about the missing profile.
+
+    Tables itself now refuses a call with no layout, so building it bare here
+    would make this test pass on the wrong TypeError.
+    """
+    tables = gen3core.Tables(layout=frlgplus.LAYOUT)
     try:
-        gen3core.decode_pokemon(bytes(80), gen3core.Tables())
-    except TypeError:
+        gen3core.decode_pokemon(bytes(80), tables)
+    except TypeError as e:
+        check("profile" in str(e),
+              f"the TypeError should be about the missing profile, got: {e}")
         return
     FAILS.append("decode_pokemon accepted a call with no profile")
+
+
+def test_tables_requires_a_layout():
+    """Important 2: no default layout, and it cannot be passed positionally.
+
+    A default would hand one game's offsets to another game's save without an
+    error — four bytes out at the Day Care and a different bag region entirely.
+    """
+    try:
+        gen3core.Tables()
+    except TypeError as e:
+        check("layout" in str(e), f"the refusal should name layout, got: {e}")
+    else:
+        FAILS.append("Tables() with no layout was accepted; the default is back")
+    try:
+        gen3core.Tables(gen3core.DATA_DIR, frlgplus.LAYOUT)
+    except TypeError as e:
+        check("positional" in str(e) or "argument" in str(e),
+              f"a positional layout should be a TypeError about arguments, got: {e}")
+    else:
+        FAILS.append("layout was accepted positionally; it must be keyword-only")
 
 
 def test_vanilla_treats_it_as_padding():

@@ -25,7 +25,7 @@ from gen3core import (SUB_ORDERS, Tables, apply_calc_modes, calc_stats, encode_t
                       exp_for_level)
 import frlgplus as P  # noqa: E402
 
-T = Tables()
+T = Tables(layout=P.LAYOUT)
 L = T.layout
 KEY = 0x1A2B3C4D
 KEY16 = KEY & 0xFFFF

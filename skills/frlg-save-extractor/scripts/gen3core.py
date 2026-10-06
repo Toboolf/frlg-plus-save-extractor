@@ -200,10 +200,15 @@ class Tables:
 
     Those files are generated from a game's source by tools/generate_tables.py —
     nothing here is hand-written, so a new game version only needs a re-run.
-    `layout` names the save-layout table of the profile in use.
+
+    `layout` names the save-layout table of the profile in use and is required
+    and keyword-only: pass `layout=<profile>.LAYOUT`. There is deliberately no
+    default, because a default would silently hand one game's offsets to another
+    game's save — the Day Care alone sits four bytes apart between FRLG+ and
+    vanilla, and the bag is a different region entirely.
     """
 
-    def __init__(self, data_dir=DATA_DIR, layout="save_layout.txt"):
+    def __init__(self, data_dir=DATA_DIR, *, layout):
         self.data_dir = data_dir
         self.layout_file = layout
         layout_path = os.path.join(data_dir, layout)

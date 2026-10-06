@@ -94,8 +94,9 @@ def set_box_hp(mon80, box_hp, box_status=0):
         struct.pack_into("<I", dec, i, u32(b, 32 + i) ^ key)
     g_index = SUB_ORDERS[pid % 24].index("G")
     packed = struct.unpack_from("<H", dec, g_index * 12 + 10)[0]
-    forme = (packed >> 14) & 3                      # keep the forme bits untouched
-    new = (box_hp & 0x3FF) | ((box_status & 0xF) << 10) | (forme << 14)
+    forme = frlgplus.decode_box_padding(packed)["forme"]   # keep the forme bits untouched
+    # The profile owns this bit layout; this tool must not carry its own copy.
+    new = frlgplus.encode_box_padding(box_hp, box_status, forme)
     struct.pack_into("<H", dec, g_index * 12 + 10, new)
     struct.pack_into("<H", b, 0x1C, sum(struct.unpack("<24H", dec)) & 0xFFFF)
     for i in range(0, 48, 4):
@@ -115,7 +116,7 @@ def main():
     if len(raw) < SECTORS_PER_SLOT * 2 * SECTOR_SIZE:
         sys.exit(f"{args.save} is only {len(raw):,} bytes — expected a 128 KB GBA save.")
 
-    tables = Tables()
+    tables = Tables(layout=frlgplus.LAYOUT)
     L = tables.layout
     sizes = section_sizes(tables)
 
