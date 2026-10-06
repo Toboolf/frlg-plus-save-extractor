@@ -468,6 +468,38 @@ def gen_save_layout(repo, consts, out, game="frlgplus"):
     return layout
 
 
+VANILLA_POCKETS = {"items": "BAG_ITEMS_COUNT", "key_items": "BAG_KEYITEMS_COUNT",
+                   "poke_balls": "BAG_POKEBALLS_COUNT", "tmhm": "BAG_TMHM_COUNT",
+                   "berries": "BAG_BERRIES_COUNT"}
+_VANILLA_FIELDS = {"items": "bagPocket_Items", "key_items": "bagPocket_KeyItems",
+                   "poke_balls": "bagPocket_PokeBalls", "tmhm": "bagPocket_TMHM",
+                   "berries": "bagPocket_Berries"}
+
+
+def _walk_vanilla_bag(annotated, counts, off):
+    """Vanilla's pockets are five plain 4-byte ItemSlot arrays, in this order.
+
+    annotated(field) -> the /*0x....*/ offset SaveBlock1 gives that field; counts maps
+    each pocket key to its slot count; off is where the first pocket should start.
+    Returns the layout keys it built, and raises SystemExit if any pocket's walked
+    offset differs from its annotation (two swapped counts keep the total but not the
+    offsets in between) or if the walk does not end exactly on seen1.
+    """
+    layout = {}
+    for key, field in _VANILLA_FIELDS.items():
+        if off != annotated(field):
+            raise SystemExit(f"vanilla bag walk put {key} at {off:#x} but SaveBlock1.{field} "
+                             f"is annotated at {annotated(field):#x}")
+        layout[f"sb1_bag_{key}"] = off
+        layout[f"bag_{key}_count"] = counts[key]
+        off += 4 * counts[key]
+    expected = annotated("seen1")
+    if off != expected:
+        raise SystemExit(
+            f"vanilla bag walk ended at {off:#x} but seen1 is annotated at {expected:#x}")
+    return layout
+
+
 def compute_layout(repo, consts, game="frlgplus"):
     """Walk the item block of SaveBlock1 so the pocket offsets come from the source."""
     g = cparse.repo_path(repo, "include/global.h")
@@ -491,25 +523,8 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["pc_items_count"] = consts["PC_ITEMS_COUNT"]
     off += 4 * consts["PC_ITEMS_COUNT"]
     if game == "vanilla":
-        # Vanilla's pockets are five plain ItemSlot arrays in this order, and the
-        # walk must land exactly on seen1 or the layout is wrong.
-        for key, count_const, field in [("items", "BAG_ITEMS_COUNT", "bagPocket_Items"),
-                                        ("key_items", "BAG_KEYITEMS_COUNT", "bagPocket_KeyItems"),
-                                        ("poke_balls", "BAG_POKEBALLS_COUNT", "bagPocket_PokeBalls"),
-                                        ("tmhm", "BAG_TMHM_COUNT", "bagPocket_TMHM"),
-                                        ("berries", "BAG_BERRIES_COUNT", "bagPocket_Berries")]:
-            # Vanilla annotates every pocket, so check each walked offset, not just the sum:
-            # two swapped counts would still land on seen1 with wrong offsets in between.
-            if off != annotated(field):
-                raise SystemExit(f"vanilla bag walk put {key} at {off:#x} but SaveBlock1.{field} "
-                                 f"is annotated at {annotated(field):#x}")
-            layout[f"sb1_bag_{key}"] = off
-            layout[f"bag_{key}_count"] = consts[count_const]
-            off += 4 * consts[count_const]
-        expected = annotated("seen1")
-        if off != expected:
-            raise SystemExit(
-                f"vanilla bag walk ended at {off:#x} but seen1 is annotated at {expected:#x}")
+        layout.update(_walk_vanilla_bag(annotated, {
+            key: consts[const] for key, const in VANILLA_POCKETS.items()}, off))
     else:
         layout["sb1_bag_items"] = off
         layout["bag_items_count"] = consts["BAG_ITEMS_COUNT"]

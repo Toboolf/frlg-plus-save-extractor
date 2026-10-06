@@ -103,6 +103,76 @@ def test_vanilla_has_no_frlgplus_only_keys():
         check(k not in V, f"vanilla layout should not define {k}")
 
 
+# ---- unit tests: no pokefirered checkout needed, so they always run -------------
+REAL_ANNOTATIONS = {"bagPocket_Items": 0x310, "bagPocket_KeyItems": 0x3B8,
+                    "bagPocket_PokeBalls": 0x430, "bagPocket_TMHM": 0x464,
+                    "bagPocket_Berries": 0x54C, "seen1": 0x5F8}
+REAL_COUNTS = {"items": 42, "key_items": 30, "poke_balls": 13, "tmhm": 58, "berries": 43}
+
+
+def test_unit_vanilla_bag_walk_happy_path():
+    got = generate_tables._walk_vanilla_bag(REAL_ANNOTATIONS.__getitem__, REAL_COUNTS, 0x310)
+    want = {"sb1_bag_items": 0x310, "bag_items_count": 42,
+            "sb1_bag_key_items": 0x3B8, "bag_key_items_count": 30,
+            "sb1_bag_poke_balls": 0x430, "bag_poke_balls_count": 13,
+            "sb1_bag_tmhm": 0x464, "bag_tmhm_count": 58,
+            "sb1_bag_berries": 0x54C, "bag_berries_count": 43}
+    check(got == want, f"walk fragment differs: {got}")
+
+
+def test_unit_vanilla_bag_walk_refuses_swapped_counts():
+    """Items and KeyItems swapped: the total is unchanged, so seen1 still matches,
+    but key_items lands at 0x388 instead of its annotated 0x3B8."""
+    swapped = dict(REAL_COUNTS, items=30, key_items=42)
+    try:
+        generate_tables._walk_vanilla_bag(REAL_ANNOTATIONS.__getitem__, swapped, 0x310)
+    except SystemExit as e:
+        msg = str(e)
+        print(f"  swapped-counts refusal: {msg}")
+        check("key_items" in msg and "0x388" in msg and "0x3b8" in msg,
+              f"refusal should name the pocket and both offsets: {msg}")
+    else:
+        check(False, "swapped counts should have been refused")
+
+
+def test_unit_vanilla_bag_walk_refuses_a_wrong_total():
+    """Every pocket matches its annotation but the walk ends short of seen1."""
+    short = dict(REAL_COUNTS, berries=42)
+    ann = dict(REAL_ANNOTATIONS)
+    try:
+        generate_tables._walk_vanilla_bag(ann.__getitem__, short, 0x310)
+    except SystemExit as e:
+        check("seen1" in str(e), f"should refuse on seen1: {e}")
+    else:
+        check(False, "a walk that misses seen1 should have been refused")
+
+
+def test_unit_required_check_names_the_missing_file():
+    """A temp tree holding all but items.h is refused by name, not with a KeyError."""
+    rel_missing = "include/constants/items.h"
+    with tempfile.TemporaryDirectory() as tmp:
+        for rel in generate_tables.REQUIRED["vanilla"]:
+            if rel == rel_missing:
+                continue
+            os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
+            open(os.path.join(tmp, rel), "w").close()
+        argv = sys.argv
+        sys.argv = ["generate_tables.py", "--game", "vanilla", "--repo", tmp]
+        try:
+            generate_tables.main()
+        except SystemExit as e:
+            msg = str(e)
+            print(f"  missing-file refusal: {msg}")
+            check(msg.endswith(f"is missing {rel_missing}, which --game vanilla needs"),
+                  f"wrong refusal: {msg}")
+        except BaseException as e:
+            check(False, f"raised {type(e).__name__}: {e}")
+        else:
+            check(False, "generator ran despite the missing file")
+        finally:
+            sys.argv = argv
+
+
 # The generator tests below need a real pret/pokefirered checkout to copy from.
 # One is not shipped, so they are skipped (and say so) where it is absent.
 VANILLA_SRC = os.path.expanduser(os.environ.get("POKEFIRED_REPO", "~/projects/pokefirered"))
