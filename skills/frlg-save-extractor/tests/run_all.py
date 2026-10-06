@@ -5,7 +5,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODULES = ["test_extractor.py", "test_local_overlay.py", "test_no_personal_data.py"]
+MODULES = ["test_extractor.py", "test_local_overlay.py", "test_no_personal_data.py",
+           "test_vendored_copies_match.py"]
 
 
 def main():
