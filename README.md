@@ -19,12 +19,16 @@ is possible at all. Go play the hack: it is far more interesting than this is. S
 [its features list](https://github.com/Deokishisu/FRLG-Plus/blob/master/FEATURES.md) for what
 it changes.
 
-## Safety
+## What's in here
 
-The skill only ever **reads** a save file — nothing under `skills/` writes to one. The one
-tool in this repository that writes, `extras/fix_boxed_hp.py`, lives outside the skill
-package, defaults to a dry run, verifies all 28 sector checksums before writing, backs up
-the save automatically, and re-verifies the checksums again afterwards.
+| | reads a save | writes a save |
+|---|---|---|
+| `skills/frlg-save-extractor/` | yes | never |
+| `extras/fix_boxed_hp.py` | yes | yes, with a backup and a dry run by default |
+
+Each skill's own `SKILL.md` states what that skill does to your save. Nothing
+in this repo writes to a save file without making a timestamped backup first
+and verifying every sector checksum before and after.
 
 ## Install
 

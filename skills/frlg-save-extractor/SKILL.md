@@ -5,6 +5,8 @@ description: Decode a Pokémon FireRed & LeafGreen+ (FRLG+ v1.5.1 ROM hack) save
 
 # FRLG+ save extractor
 
+This skill only ever reads your save file. It never writes to it.
+
 Turns an FRLG+ save into a full structured report. The script does the decoding; your job is
 to run it, read the result, report back, and — only if the user has a tracker configured — fold
 the result into it and keep the change-detection baseline current.

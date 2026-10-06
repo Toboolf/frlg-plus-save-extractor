@@ -64,14 +64,15 @@ def extra_patterns():
 def find_repo_root(package):
     """The source-repo root, or None when the package is installed standalone.
 
-    The guard ships inside the .skill, where nothing sits above the package. Only a
-    build.sh plus a .git directory two levels up positively identify the source repo;
-    anything weaker could make an installed copy wander into an unrelated directory.
+    The guard ships inside the .skill, where nothing sits above the package. A shared/
+    directory two levels up positively identifies the source repo, which is how
+    test_vendored_copies_match.py recognises it too. .git is deliberately not required: a
+    GitHub zip or source tarball has no .git, and demanding one made detection fail
+    silently there, so the guard stopped scanning the repo root (the hole behind finding I2).
+    An installed skill has no shared/ above it, so it cannot wander out of its package.
     """
     root = os.path.dirname(os.path.dirname(package))
-    # .git is a directory in a clone but a plain file in a worktree or submodule; test for
-    # existence so neither silently downgrades the guard to package-only.
-    if os.path.isfile(os.path.join(root, "build.sh")) and os.path.exists(os.path.join(root, ".git")):
+    if os.path.isdir(os.path.join(root, "shared")):
         return root
     return None
 
@@ -210,14 +211,19 @@ def test_scanner_reports_unreadable_files_as_failures():
           f"an unreadable file was silently skipped instead of reported: {hits}")
 
 
-def _make_repo(tmp, git_as_file=False):
-    """A temp copy of the source-repo layout: build.sh + .git above skills/<pkg>/tests."""
+def _make_repo(tmp, git="dir"):
+    """A temp copy of the source-repo layout: shared/ above skills/<pkg>/tests.
+
+    git is "dir" (a clone), "file" (a worktree or submodule, where .git is a pointer
+    file) or None (a GitHub zip or tarball, which has no .git at all).
+    """
     pkg = os.path.join(tmp, "skills", "frlg-save-extractor")
     os.makedirs(os.path.join(pkg, "tests"))
-    if git_as_file:  # a worktree or submodule checkout: .git is a pointer file
+    os.makedirs(os.path.join(tmp, "shared"))
+    if git == "file":
         with open(os.path.join(tmp, ".git"), "w") as f:
             f.write("gitdir: /elsewhere\n")
-    else:
+    elif git == "dir":
         os.makedirs(os.path.join(tmp, ".git"))
     open(os.path.join(tmp, "build.sh"), "w").close()
     return pkg
@@ -245,12 +251,48 @@ def test_guard_scans_repo_root_inside_source_repo():
 
 def test_guard_detects_repo_when_git_is_a_file():
     tmp = tempfile.mkdtemp()
-    pkg = _make_repo(tmp, git_as_file=True)
+    pkg = _make_repo(tmp, git="file")
     with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as f:
         f.write("write to someone@example.com")
     check(find_repo_root(pkg) == tmp, "a worktree/submodule layout (.git as a file) was not detected")
     check(any(p == "README.md" for p, _, _ in scan_shipped(pkg, PATTERNS)),
           "a root violation was not reported when .git is a file")
+
+
+def test_guard_detects_repo_without_git():
+    """A GitHub zip or tarball has no .git; it must still be scanned as the source repo."""
+    tmp = tempfile.mkdtemp()
+    pkg = _make_repo(tmp, git=None)
+    check(not os.path.exists(os.path.join(tmp, ".git")), "test setup left a .git behind")
+    with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as f:
+        f.write("write to someone@example.com")
+    check(find_repo_root(pkg) == tmp, "a .git-less copy of the repo was not detected as the source repo")
+    check(any(p == "README.md" for p, _, _ in scan_shipped(pkg, PATTERNS)),
+          "a root violation was not reported in a .git-less copy")
+
+
+def test_repo_root_found_from_the_real_layout():
+    """skills/<name>/ is two levels under the repo root, so the walk reaches it.
+
+    Only meaningful in the source repo: the unzipped .skill has no repo above it, which
+    test_standalone_install_finds_no_repo covers, so there is nothing to find there.
+    """
+    if not os.path.isdir(os.path.join(os.path.dirname(os.path.dirname(PACKAGE)), "shared")):
+        return
+    root = find_repo_root(PACKAGE)
+    check(root is not None, "find_repo_root returned None inside the source repo")
+    if root:
+        check(os.path.isdir(os.path.join(root, "shared")),
+              f"{root} does not look like the repo root (no shared/)")
+
+
+def test_standalone_install_finds_no_repo():
+    """An installed .skill must not wander out of its package."""
+    with tempfile.TemporaryDirectory() as d:
+        pkg = os.path.join(d, "frlg-save-extractor")
+        os.makedirs(os.path.join(pkg, "scripts"))
+        check(find_repo_root(pkg) is None,
+              "find_repo_root must return None when there is no shared/ above the package")
 
 
 def test_scanner_flags_stray_save_files_case_insensitively():
@@ -303,6 +345,9 @@ def main():
     test_guard_scans_repo_root_inside_source_repo()
     test_guard_skips_git_and_dist_in_repo_root()
     test_guard_detects_repo_when_git_is_a_file()
+    test_guard_detects_repo_without_git()
+    test_repo_root_found_from_the_real_layout()
+    test_standalone_install_finds_no_repo()
     test_scanner_flags_stray_save_files_case_insensitively()
     test_guard_scans_only_package_when_installed_standalone()
     test_shipped_tree_is_clean()
