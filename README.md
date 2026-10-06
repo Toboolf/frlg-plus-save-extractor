@@ -8,6 +8,17 @@ natures, moves and origins, the fully rebuilt FRLG+ bag (all seven pockets), bot
 the roaming legendary, Master Trainer progress, event flags and story variables, game stats,
 the Hall of Fame, and a diff against a previous run.
 
+This tool exists because of someone else's work. **[FRLG+](https://github.com/Deokishisu/FRLG-Plus)
+is a ROM hack by [Deokishisu](https://github.com/Deokishisu)**, built on
+[pret](https://github.com/pret)'s [decompilation of FireRed and LeafGreen](https://github.com/pret/pokefirered).
+Everything this skill knows about where FRLG+ keeps things — every offset, every item and
+species name, every map and flag name, the wild-encounter tables — is generated from that
+published source, which is the only reason a save reader for a hack this extensively modified
+is possible at all. Go play the hack: it is far more interesting than this is. See
+[Provenance and credits](#provenance-and-credits) for the details, and
+[its features list](https://github.com/Deokishisu/FRLG-Plus/blob/master/FEATURES.md) for what
+it changes.
+
 ## Safety
 
 The skill only ever **reads** a save file — nothing under `skills/` writes to one. The one
