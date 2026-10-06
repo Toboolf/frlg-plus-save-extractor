@@ -28,9 +28,10 @@ SKIP_NAMES = {"local.json", ".DS_Store"}
 # guard also scans the whole repo root. A private denylist holds its owner's literals by design
 # (gitignored at any depth and excluded from the zip), so it is skipped by name. The guard
 # files hold deliberate seeded patterns and are skipped only by ABSOLUTE PATH, as the exact
-# set <repo root>/skills/*/tests/test_no_personal_data.py (see guard_copies), never by
-# basename: this file ships, so a basename skip would exempt any file of that name anywhere.
-# test_guard_copies_are_identical pins every exempt copy to this one.
+# set shared/tests/test_no_personal_data.py plus its vendored copies
+# skills/*/tests/test_no_personal_data.py (see guard_copies), never by basename: this file
+# ships, so a basename skip would exempt any file of that name anywhere. Those copies are
+# anchored to the one original by the VENDORED map and test_vendored_copies_match.py.
 SKIP_BY_NAME = {"denylist.local.txt"}
 # Save files are binary and carry no pattern this scanner could match, so they are caught by
 # filename: anything that looks like one inside a tree about to be zipped is a failure.
@@ -87,13 +88,16 @@ def find_repo_root(package):
 
 
 def guard_copies():
-    """Absolute paths of every package's copy of this guard in the source repo, or the empty
-    set for an installed package, which has no sibling packages to exempt."""
+    """Absolute paths of this guard's original and every package's vendored copy in the source
+    repo, or the empty set for an installed package, which has nothing above it to exempt."""
     root = find_repo_root(PACKAGE)
     if not root:
         return set()
-    pattern = os.path.join(root, "skills", "*", "tests", "test_no_personal_data.py")
-    return {os.path.abspath(p) for p in glob.glob(pattern)}
+    found = set()
+    for parts in (("shared", "tests"), ("skills", "*", "tests")):
+        found.update(os.path.abspath(p) for p in glob.glob(
+            os.path.join(root, *parts, "test_no_personal_data.py")))
+    return found
 
 
 def scan_shipped(package, patterns):
@@ -354,22 +358,6 @@ def test_shipped_tree_is_clean():
         FAILS.append(f"{path}: {label} — {text!r}")
 
 
-def test_guard_copies_are_identical():
-    """Every package's copy of this guard is exempt from the scan, so each must equal this
-    one byte for byte: the exemption is trusted only as far as this equality holds."""
-    mine = os.path.abspath(__file__)
-    with open(mine, "rb") as f:
-        mine_bytes = f.read()
-    copies = guard_copies()
-    if find_repo_root(PACKAGE):
-        check(mine in copies, "this guard is not among the exempt copies the repo glob finds")
-    for path in sorted(copies):
-        with open(path, "rb") as f:
-            check(f.read() == mine_bytes,
-                  f"{os.path.relpath(path, PACKAGE)} differs from this guard, yet is exempt from the scan")
-        check(os.path.isabs(path), f"exempt path is not absolute: {path}")
-
-
 def test_a_file_sharing_the_guards_basename_is_still_scanned():
     """The exemption is by absolute path, so a same-named file elsewhere is not exempt."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -383,7 +371,6 @@ def test_a_file_sharing_the_guards_basename_is_still_scanned():
 
 
 def main():
-    test_guard_copies_are_identical()
     test_a_file_sharing_the_guards_basename_is_still_scanned()
     test_scanner_detects_a_seeded_violation()
     test_scanner_accepts_clean_text()

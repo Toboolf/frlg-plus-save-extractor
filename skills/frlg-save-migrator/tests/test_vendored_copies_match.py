@@ -69,8 +69,9 @@ def check_every_shared_file_is_mapped(pairs):
             src = "shared/" + rel_slash
             if src in sources:
                 continue
-            # shared/tools/ vendors to tools/, everything else to scripts/.
-            dst = rel_slash if rel_slash.startswith("tools/") else "scripts/" + rel_slash
+            # shared/tools/ and shared/tests/ vendor to tools/ and tests/, everything else to scripts/.
+            dst = (rel_slash if rel_slash.startswith(("tools/", "tests/"))
+                   else "scripts/" + rel_slash)
             FAILS.append(
                 f"{src} has no row in build.sh's VENDORED map, so no skill package "
                 f"gets it and this test cannot notice it drifting. Add "
