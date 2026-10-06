@@ -14,6 +14,9 @@ VENDORED=(
 "shared/gen3core.py scripts/gen3core.py"
 "shared/frlgplus.py scripts/frlgplus.py"
 "shared/vanilla_frlg.py scripts/vanilla_frlg.py"
+"shared/tools/generate_tables.py tools/generate_tables.py"
+"shared/tools/cparse.py tools/cparse.py"
+"shared/tools/display_names.json tools/display_names.json"
 )
 
 CHECK_ONLY=${1:-}
