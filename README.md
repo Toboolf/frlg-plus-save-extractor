@@ -30,6 +30,14 @@ Each skill's own `SKILL.md` states what that skill does to your save. Nothing
 in this repo writes to a save file without making a timestamped backup first
 and verifying every sector checksum before and after.
 
+### What `extras/fix_boxed_hp.py` does when it writes
+
+- **Dry run by default.** It prints what it would change and writes nothing unless you pass `--apply`.
+- **Checks first.** It reproduces all 28 sector checksums (2 slots x 14 sectors) and refuses to touch the save if any do not match.
+- **Backs up, then writes.** Immediately before writing it copies the save to `<save>.bak-<timestamp>`.
+- **Checks afterwards.** It re-verifies all 28 checksums on the bytes it wrote and exits with an error if any no longer match.
+- **Active slot only.** Only the more recent valid save slot is modified; the other slot is left as a rollback point.
+
 ## Install
 
 1. Download `frlg-save-extractor.skill` from the [latest Release](../../releases/latest).
