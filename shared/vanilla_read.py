@@ -11,7 +11,7 @@ written here.
 """
 from __future__ import annotations
 
-from gen3core import (SECTOR_DATA_SIZE, choose_slot, decode_pokemon, decode_text,
+from gen3core import (choose_slot, decode_pokemon, decode_text,
                       u16, u32)
 import vanilla_frlg
 
@@ -22,15 +22,33 @@ MAX_PARTY = 6
 
 
 def read_vanilla(raw, tables):
+    """Parse the active slot. Returns the dict described in the migrator's plan.
+
+    Indexing: `party` and `party_raw` are both exactly `partyCount` long and indexed by
+    PHYSICAL party slot. `party_raw[i]` is always the 100 bytes at that slot, and
+    `party[i]` is its decoded Pokémon, or None if the slot is inside partyCount but decodes
+    empty (an all-zero first 80 bytes). Nothing is compacted, so a writer that does
+    `sb1[sb1_party + 100*i]` over either list lands on the right slot. `boxes`/`boxes_raw`
+    work the same way: 14 x 30, None for an empty slot, raw bytes always kept.
+
+    Refuses (ValueError) when any of the 14 sections is missing from the chosen slot: the
+    encryption key lives in section 0 and the money, bag and party in 1-4, so zero-filling
+    a gap would silently hand back key 0 and values decoded from zeros. Checksum or
+    signature problems on sections that are present are NOT refused; they are reported in
+    slot["valid"] and slot["problems"], and callers decide whether to proceed.
+    """
     L = tables.layout
     best, _other = choose_slot(raw)
+    absent = [i for i in range(14) if i not in best["sections"]]
+    if absent:
+        raise ValueError(f"save slot {best['slot']} is missing sections {absent}: "
+                         f"{'; '.join(best['problems'])}")
     slot = dict(best)
     slot["index"] = 0 if best["slot"] == "A" else 1
     secs = best["sections"]
-    blank = b"\0" * SECTOR_DATA_SIZE
-    sb2 = secs.get(0, blank)
-    sb1 = b"".join(secs.get(i, blank) for i in range(1, 5))
-    pc = b"".join(secs.get(i, blank) for i in range(5, 14))
+    sb2 = secs[0]
+    sb1 = b"".join(secs[i] for i in range(1, 5))
+    pc = b"".join(secs[i] for i in range(5, 14))
     key = u32(sb2, L["sb2_encryption_key"])
     key16 = key & 0xFFFF
 
@@ -50,9 +68,8 @@ def read_vanilla(raw, tables):
         chunk = sb1[o:o + PARTY_MON_SIZE]
         m = decode_pokemon(chunk, tables, player, party=True, where=f"party {i + 1}",
                            profile=vanilla_frlg)
-        if m:
-            party.append(m)
-            party_raw.append(bytes(chunk))
+        party.append(m)                   # None for a hole: keep physical slot indexing
+        party_raw.append(bytes(chunk))
 
     boxes, boxes_raw = [], []
     for bx in range(L["total_boxes"]):

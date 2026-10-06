@@ -73,10 +73,39 @@ def test_a_party_pokemon_decodes_with_the_vanilla_profile():
         m = v["party"][0]
         check(m["species"] == "Bulbasaur", f"species {m['species']}")
         check(m["level"] == 5, f"level {m['level']}")
-        check(m.get("box_hp_recorded") is not True,
-              "vanilla stores no boxed HP — that halfword is padding")
+        check(m["hp_current"] == m["stats"]["HP"],
+              f"party HP is stored whole: {m['hp_current']} vs {m['stats']['HP']}")
         check(v["party_raw"] == [fixtures.mon("Bulbasaur", 5)],
               "party_raw must be the exact 100 bytes written")
+
+
+def test_a_hole_in_the_party_keeps_the_raw_slices_on_their_physical_slots():
+    """A slot inside partyCount that decodes empty must not shift the Pokémon after it:
+    a writer indexes sb1_party + 100*i over these lists."""
+    a = fixtures.mon("Bulbasaur", 5, pid=0x01010101)
+    b = fixtures.mon("Pidgey", 6, pid=0x02020202)
+    c = fixtures.mon("Rattata", 7, pid=0x03030303)
+    raw = fixtures.build_vanilla_save(party=[a, bytes(100), b, c])
+    v = read_vanilla(raw, T)
+    check(len(v["party"]) == 4 and len(v["party_raw"]) == 4,
+          f"lengths {len(v['party'])}/{len(v['party_raw'])}, expected 4/4")
+    check(v["party"][1] is None, "the hole must decode to None, in place")
+    check([m and m["species"] for m in v["party"]] == ["Bulbasaur", None, "Pidgey", "Rattata"],
+          f"party order {[m and m['species'] for m in v['party']]}")
+    check(v["party_raw"] == [a, bytes(100), b, c], "party_raw is off its physical slots")
+    off = T.layout["sb1_party"]
+    check(all(v["party_raw"][i] == v["sb1"][off + 100 * i:off + 100 * (i + 1)] for i in range(4)),
+          "party_raw[i] is not the bytes at sb1_party + 100*i")
+
+
+def test_an_incomplete_slot_is_refused_not_zero_filled():
+    raw = bytearray(fixtures.build_vanilla_save(one_slot_only=True))
+    raw[0xFF8:0xFFC] = bytes(4)            # break one sector's signature in the only slot
+    try:
+        read_vanilla(bytes(raw), T)
+        check(False, "a slot missing a section was read instead of refused")
+    except ValueError as e:
+        check("missing sections" in str(e), f"refusal does not name the gap: {e}")
 
 
 def test_boxes_and_raw_slices_line_up():
