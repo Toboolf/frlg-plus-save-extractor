@@ -110,7 +110,10 @@ def convert_daycare(src_sb1, vanilla_L, plus_L):
 
 
 # ------------------------------------------- rules 3 and 4 (per Pokemon), together
-MAX_LEGAL_BOX_HP = 0x3FF
+# The width of FRLG+'s boxHP bitfield, NOT the game's own 714 HP cap (which
+# extras/fix_boxed_hp.py calls MAX_LEGAL_BOX_HP). No legal Pokemon reaches either,
+# so this only stops a hand-edited or glitched stat from overflowing into boxStatus.
+BOX_HP_FIELD_MAX = 0x3FF
 DEOXYS_FORME_BY_VERSION = {"fr": 1, "lg": 2}      # Attack in FireRed, Defense in LeafGreen
 
 
@@ -156,7 +159,7 @@ def convert_mons(src, plus_L, tables, *, source_version):
         return gen3core.rewrite_substructures(
             raw80,
             g_halfword=frlgplus.encode_box_padding(
-                min(max_hp, MAX_LEGAL_BOX_HP), 0, forme),
+                min(max_hp, BOX_HP_FIELD_MAX), 0, forme),
             met_location=new_loc)
 
     party = [one(m, src["party_raw"][i]) for i, m in enumerate(src["party"])]
@@ -242,18 +245,18 @@ def zeroed_regions(plus_L):
     """FRLG+ reads these from space vanilla leaves as filler, so a vanilla save's
     bytes there must not be inherited as if they were FRLG+ data.
 
-    The three array lengths (52, 20, 36) are literals because the generated layout
-    emits each region's OFFSET but not its length. tests/test_rules.py pins each one
-    against what the header's own arithmetic forces — the distance to the field that
-    follows it, or the number of bits the Master Trainer bitfield has to hold — so a
-    size that drifted out of step with the source would fail there rather than
-    silently zero the wrong span.
+    The Master Trainer bitfield's length is generated (master_trainer_flags_bytes,
+    the distance from unused_3A94 + 44 to registeredTexts). The other two array
+    lengths (52 and 36) are literals because the layout emits those regions' OFFSETS
+    but not their lengths; tests/test_rules.py pins each against the distance to the
+    field that follows it in the generated layout, so a size that drifted out of step
+    with the source fails there rather than silently zeroing the wrong span.
     """
     leftover = plus_L["sb1_item_block_end"] - (plus_L["sb1_bag_held_items"]
                                                + 4 * plus_L["bag_held_items_count"])
     return {"sb1_master_trainer_title": bytes(1),
             "sb1_last_viewed_pokedex_entry": bytes(2),
             "sb1_nuzlocke_dupe_flags": bytes(52),
-            "sb1_master_trainer_flags": bytes(20),
+            "sb1_master_trainer_flags": bytes(plus_L["master_trainer_flags_bytes"]),
             "sb1_filler_easy_chat": bytes(36),
             "__leftover_item_slots": bytes(leftover)}

@@ -470,6 +470,12 @@ def gen_save_layout(repo, consts, out, game="frlgplus"):
     return layout
 
 
+# One bit per Kanto species (1..151) plus Grandmaster (152), so 153 bits -> 20 bytes.
+# Only a lower bound on the emitted length: the real length is the distance to
+# registeredTexts, and this just refuses a carve-out that got too small for the flags.
+MASTER_TRAINER_BITS = 153
+
+
 VANILLA_POCKETS = {"items": "BAG_ITEMS_COUNT", "key_items": "BAG_KEYITEMS_COUNT",
                    "poke_balls": "BAG_POKEBALLS_COUNT", "tmhm": "BAG_TMHM_COUNT",
                    "berries": "BAG_BERRIES_COUNT"}
@@ -642,6 +648,18 @@ def compute_layout(repo, consts, game="frlgplus"):
     if game != "vanilla":        # Master Trainers is an FRLG+ addition
         layout["sb1_master_trainer_title"] = annotated("filler_062C") + 5
         layout["sb1_master_trainer_flags"] = annotated("unused_3A94") + 44
+        # masterTrainerFlags[20] was carved out of unused_3A94's original 64 bytes, so
+        # nothing between there and registeredTexts changed size and that field's
+        # /*0x3AD4*/ annotation is still live rather than a vanilla leftover. The
+        # distance to it is therefore the bitfield's length, which is what a migration
+        # has to zero — emitted so no caller has to hard-code the 20.
+        layout["master_trainer_flags_bytes"] = (annotated("registeredTexts")
+                                                - layout["sb1_master_trainer_flags"])
+        if layout["master_trainer_flags_bytes"] * 8 < MASTER_TRAINER_BITS:
+            raise SystemExit(
+                f"masterTrainerFlags is {layout['master_trainer_flags_bytes']} bytes from "
+                f"unused_3A94 to registeredTexts, too few for {MASTER_TRAINER_BITS} "
+                f"Master Trainer bits — the carve-out moved.")
     if game != "vanilla":
         # filler_EasyChatPairs replaces vanilla's dewfordTrends[5]; the field does not
         # exist in vanilla at all, where that space is dewfordTrends. A migration zeroes

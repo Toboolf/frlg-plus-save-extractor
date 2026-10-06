@@ -14,6 +14,7 @@ import vanilla_frlg  # noqa: E402
 import frlgplus  # noqa: E402
 import fixtures  # noqa: E402
 from vanilla_read import read_vanilla  # noqa: E402
+import rules  # noqa: E402
 from rules import (build_key_flags, convert_bag, convert_daycare, convert_mons,  # noqa: E402
                    remap_ids, zeroed_regions)
 
@@ -481,6 +482,37 @@ def test_a_pokemon_s_met_location_is_remapped_in_the_same_pass():
     check(g_padding(mon80)["box_hp"] > 0, "the same pass should also have set boxHP")
 
 
+def test_box_hp_is_clamped_to_the_width_of_the_field():
+    """boxHP is 10 bits, so 1023 is the most that can be stored; one more would
+    overflow into boxStatus and the Pokemon would come out of the box poisoned.
+
+    No legal Pokemon gets near it — the game's own cap is 714, and Blissey at level
+    100 with max HP EVs is exactly that — so this drives the clamp with a stat that
+    could only come from a hand-edited or glitched save, the same way the bag's
+    overflow test does. Without the clamp, encode_box_padding refuses the value and
+    the whole conversion raises instead of carrying the Pokemon.
+    """
+    check(rules.BOX_HP_FIELD_MAX == 0x3FF,
+          f"the field is 10 bits, so the clamp is 0x3FF, not "
+          f"{rules.BOX_HP_FIELD_MAX:#x}")
+    raw = fixtures.build_vanilla_save(
+        boxes=[[fixtures.mon("Pikachu", 25, party=False)] + [None] * 29]
+              + [[None] * 30 for _ in range(13)])
+    v = read_vanilla(raw, TV)
+    real_hp = v["boxes"][0][0]["stats"]["HP"]
+    check(real_hp <= rules.BOX_HP_FIELD_MAX,
+          f"premise: a real Pokemon's max HP ({real_hp}) is inside the field")
+    v["boxes"][0][0]["stats"]["HP"] = 5000
+    out, skipped, _ = convert_mons(v, F, TF, source_version="fr")
+    check(skipped == [], f"an over-cap stat is clamped, not skipped: {skipped}")
+    padding = g_padding(out["boxes"][0][0])
+    check(padding["box_hp"] == rules.BOX_HP_FIELD_MAX,
+          f"boxHP should clamp to {rules.BOX_HP_FIELD_MAX}, got {padding['box_hp']}")
+    check(padding["box_status"] == 0,
+          f"the clamp must not spill into boxStatus, got {padding['box_status']}")
+    check(padding["forme"] == 0, f"nor into forme, got {padding['forme']}")
+
+
 def test_cerulean_cave_is_remapped_and_pallet_town_is_not():
     """The finding this whole remap exists for: FRLG+ inserts three Safari Zone
     maps into gMapGroup_Dungeons, so a save made in Cerulean Cave would otherwise
@@ -523,6 +555,14 @@ def test_every_stored_warp_and_the_quest_log_are_remapped():
         got = (writes[key][0], writes[key][1])
         check(got == (fg, fn), f"{key} should be {(fg, fn)}, got {got}")
         check(len(writes[key]) == 8, f"{key} should write a whole 8-byte warp")
+        # struct WarpData's other five bytes are warpId and the s16 x, y: where the
+        # player is standing INSIDE the map. Only the map moves; zeroing these would
+        # drop the player on the map's warp 0 at (0, 0).
+        tail = struct.unpack_from("<bxhh", writes[key], 2)
+        check(tail == (7, 13, 21),
+              f"{key}: warpId/x/y should carry through as (7, 13, 21), got {tail}")
+        check(writes[key][2:] == src[V[key] + 2:V[key] + 8],
+              f"{key}: the bytes after mapGroup/mapNum were not carried verbatim")
     scenes = writes["sb1_quest_log"]
     check(len(scenes) == stride * V["quest_log_scene_count"],
           f"the quest log write is {len(scenes)} bytes")
@@ -533,14 +573,25 @@ def test_every_stored_warp_and_the_quest_log_are_remapped():
 
 
 def test_a_zeroed_quest_log_scene_is_left_alone():
-    """(0, 0) is MAP_GROUP/NUM of an unused scene, and it is also a real map id
-    (BattleColosseum_2P). Remapping it would write a map into an empty scene."""
-    remaps = vanilla_frlg.remaps(DATA)
+    """(0, 0) means "this scene is unused", but it is also a real map id —
+    BattleColosseum_2P, which happens to be identity-mapped today. The guard is what
+    makes an unused scene stay unused regardless; without it, the scene's map triple
+    would be whatever BattleColosseum_2P's row says.
+
+    So this doctors that one row to a non-identity value. The guard must still leave
+    the scene alone; dropping it writes a map into an empty scene.
+    """
+    remaps = dict(vanilla_frlg.remaps(DATA))
+    check(remaps["maps"][(0, 0)] == (0, 0),
+          "premise: BattleColosseum_2P is identity-mapped today, which is why the "
+          "guard needs a doctored row to be testable at all")
+    remaps["maps"] = dict(remaps["maps"])
+    remaps["maps"][(0, 0)] = (9, 99)
     raw = fixtures.build_vanilla_save()
     v = read_vanilla(raw, TV)
     writes, _ = remap_ids(v["sb1"], V, F, remaps)
     check(set(writes["sb1_quest_log"]) == {0},
-          "an all-zero quest log must come out all zero")
+          "an all-zero quest log must come out all zero, not carry (9, 99)")
 
 
 def test_the_map_layout_id_is_remapped_as_a_halfword():
@@ -659,20 +710,21 @@ def test_the_carved_out_regions_are_zeroed():
     """FRLG+ reads these from space vanilla leaves as filler, so whatever a vanilla
     save happens to hold there must not be inherited as data.
 
-    The three array lengths are literals in rules.py because the layout emits each
-    region's offset but not its length, so each one is pinned here against what the
-    header's own arithmetic forces: the distance to the field that follows it, or
-    (for the Master Trainer bitfield) the number of bits it has to hold.
+    Every length is pinned against the generated layout rather than against another
+    hand-written number: masterTrainerFlags' length is emitted outright
+    (master_trainer_flags_bytes), and the two that rules.py still spells as literals
+    are checked against the distance to the field that follows them, so a size that
+    drifted out of step with the FRLG+ source fails here instead of zeroing the
+    wrong span.
     """
     z = zeroed_regions(F)
-    master_trainer_bytes = -(-(frlgplus.MASTER_TRAINER_GRANDMASTER + 1) // 8)
     sizes = {
         # nuzlockeDupeFlags[52] sits between unused_348C and the relocated berry pouch.
         "sb1_nuzlocke_dupe_flags": F["sb1_bag_berries"] - F["sb1_nuzlocke_dupe_flags"],
         # filler_EasyChatPairs[36] runs from its offset to the Day Care.
         "sb1_filler_easy_chat": F["sb1_daycare"] - F["sb1_filler_easy_chat"],
-        # masterTrainerFlags[20] is exactly the bits for species 1..151 plus Grandmaster.
-        "sb1_master_trainer_flags": master_trainer_bytes,
+        # masterTrainerFlags[20] is generated: unused_3A94 + 44 to registeredTexts.
+        "sb1_master_trainer_flags": F["master_trainer_flags_bytes"],
         # u8 masterTrainerTitle and u16 lastViewedPokedexEntry.
         "sb1_master_trainer_title": 1,
         "sb1_last_viewed_pokedex_entry": F["sb1_key_flags"] - F["sb1_last_viewed_pokedex_entry"],
@@ -683,9 +735,12 @@ def test_the_carved_out_regions_are_zeroed():
     check(sizes["sb1_filler_easy_chat"] == 36,
           f"filler_EasyChatPairs should be 36 bytes, the layout says "
           f"{sizes['sb1_filler_easy_chat']}")
-    check(master_trainer_bytes == 20,
-          f"masterTrainerFlags should be 20 bytes, the bit count says "
-          f"{master_trainer_bytes}")
+    check(sizes["sb1_master_trainer_flags"] == 20,
+          f"masterTrainerFlags should be 20 bytes, the layout says "
+          f"{sizes['sb1_master_trainer_flags']}")
+    check(sizes["sb1_master_trainer_flags"] * 8 > frlgplus.MASTER_TRAINER_GRANDMASTER,
+          f"{sizes['sb1_master_trainer_flags']} bytes cannot hold a bit for "
+          f"Grandmaster ({frlgplus.MASTER_TRAINER_GRANDMASTER})")
     for key, size in sizes.items():
         check(key in z, f"{key} should be zeroed")
         if key in z:

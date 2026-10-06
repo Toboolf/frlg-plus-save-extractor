@@ -7,7 +7,9 @@ The no-regression gate diffs the extractor's JSON, so it structurally cannot see
 this tool at all — which is how a silent no-op in it stayed hidden once already.
 This builds a synthetic save with one boxed Pokemon whose box_hp is 0, runs the
 tool's selection logic as a dry run, and asserts it picks exactly that slot and
-writes nothing. It never touches a real save file.
+writes nothing. A second test calls set_box_hp directly and decodes the bytes it
+produced, which is the only place the tool's actual output is checked. Neither
+touches a real save file.
 
 extras/ is not part of the skill package, so inside an installed .skill there is
 nothing to test here and this module says so and passes.
@@ -72,6 +74,54 @@ def test_dry_run_selects_the_unwritten_slot():
             check(f.read() == raw, "a dry run must not modify the save file")
         strays = [n for n in os.listdir(tmp) if n != "synthetic.bin"]
         check(not strays, f"a dry run must not leave files behind, found {strays}")
+
+
+def test_set_box_hp_writes_the_hp_and_keeps_the_forme():
+    """The one assertion that reads the tool's own bytes back.
+
+    set_box_hp fills in a missing HP and must change nothing else. It routes through
+    frlgplus.write_box_padding, whose `forme` argument DEFAULTS TO 0 — so calling it
+    without first reading the forme back would quietly reset a Deoxys to its Normal
+    forme, in the only tool here that writes a save. The dry-run test above cannot
+    see that: it never decodes the produced bytes, and its fixture has no forme.
+    """
+    if not os.path.isfile(TOOL):
+        print("standalone install: no extras/fix_boxed_hp.py to test — nothing to check")
+        return
+    sys.path.insert(0, os.path.join(REPO, "extras"))
+    import fix_boxed_hp
+    import frlgplus
+    import gen3core
+    from test_extractor import make_mon
+
+    # Deoxys in its Defense forme, deposited with no HP recorded.
+    before = make_mon("Deoxys", 50, 0x0000004A, party=False, box_hp=0, forme=2)
+    check(frlgplus.decode_box_padding(
+        gen3core.u16(gen3core.decrypt_substructures(before)[0]["G"], 10))
+        == {"box_hp": 0, "box_status": 0, "forme": 2},
+        "premise: the fixture should start at boxHP 0 with forme 2")
+
+    after = fix_boxed_hp.set_box_hp(before, 219)
+    got = frlgplus.decode_box_padding(
+        gen3core.u16(gen3core.decrypt_substructures(after)[0]["G"], 10))
+    check(got == {"box_hp": 219, "box_status": 0, "forme": 2},
+          f"set_box_hp should write HP and keep forme 2, got {got}")
+    check(len(after) == len(before), f"length changed: {len(after)} vs {len(before)}")
+    check(after[:0x1C] == before[:0x1C], "the unencrypted header changed")
+
+    # And the status argument reaches the field without disturbing the forme either.
+    sick = fix_boxed_hp.set_box_hp(before, 219, 9)
+    got = frlgplus.decode_box_padding(
+        gen3core.u16(gen3core.decrypt_substructures(sick)[0]["G"], 10))
+    check(got == {"box_hp": 219, "box_status": 9, "forme": 2},
+          f"a status write should also keep forme 2, got {got}")
+
+    # Everything outside that one halfword must be untouched.
+    b_subs = gen3core.decrypt_substructures(before)[0]
+    a_subs = gen3core.decrypt_substructures(after)[0]
+    for part in ("A", "E", "M"):
+        check(a_subs[part] == b_subs[part], f"substructure {part} changed")
+    check(a_subs["G"][:10] == b_subs["G"][:10], "the rest of substructure G changed")
 
 
 def main():

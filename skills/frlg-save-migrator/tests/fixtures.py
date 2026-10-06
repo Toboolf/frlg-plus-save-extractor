@@ -66,6 +66,7 @@ def mon(species, level, *, pid=0x11223344, otid=OTID, ot="ASH", nick=None,
 def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=None,
                        items=(), key_items=(), poke_balls=(), tmhm=(), berries=(),
                        player="ASH", map_group=3, map_num=0, layout_id=1,
+                       warp_id=7, warp_x=13, warp_y=21,
                        daycare_step=0, one_slot_only=False):
     """A 128 KB vanilla save. Pocket arguments are lists of (item id, quantity)."""
     sb1 = bytearray(L["sb1_size"])
@@ -86,11 +87,14 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
     stat_idx = T.game_stat_id("GAME_STAT_SAVED_GAME")
     struct.pack_into("<I", sb1, L["sb1_game_stats"] + 4 * stat_idx, save_counter ^ KEY)
 
-    # Where the player is standing, and the warps the migrator remaps.
+    # Where the player is standing, and the warps the migrator remaps. struct WarpData
+    # is {s8 mapGroup, mapNum, warpId; s16 x, y} — 8 bytes, identical in both games.
+    # warpId/x/y are non-zero on purpose: only mapGroup and mapNum are remapped, and
+    # a rule that rewrote the whole struct would lose the player's position in the map.
     for key in ("sb1_location", "sb1_continue_game_warp", "sb1_dynamic_warp",
                 "sb1_last_heal_location", "sb1_escape_warp"):
-        sb1[L[key]] = map_group & 0xFF
-        sb1[L[key] + 1] = map_num & 0xFF
+        struct.pack_into("<BBBxhh", sb1, L[key], map_group & 0xFF, map_num & 0xFF,
+                         warp_id & 0xFF, warp_x, warp_y)
     struct.pack_into("<H", sb1, L["sb1_map_layout_id"], layout_id)
     sb1[L["sb1_daycare_step_counter"]] = daycare_step
 
