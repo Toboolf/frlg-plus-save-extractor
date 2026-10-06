@@ -19,6 +19,7 @@ import frlgplus  # noqa: E402
 import plan as planmod  # noqa: E402
 import savewrite  # noqa: E402
 import vanilla_frlg  # noqa: E402
+import verify  # noqa: E402
 from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
 from vanilla_read import BOX_MON_SIZE, PARTY_MON_SIZE, read_vanilla  # noqa: E402
 
@@ -72,7 +73,7 @@ def looks_like_frlgplus(src, plus_tables):
     return None
 
 
-def assemble_blocks(p, src, tf):
+def assemble_blocks(p, src, tf, vanilla_L=None):
     """Apply the plan's writes to copies of SaveBlock1 and the PC. Every offset is a
     generated layout key. Pokémon go back to the PHYSICAL slot they came from:
     compacting would hand the game a different party."""
@@ -82,6 +83,15 @@ def assemble_blocks(p, src, tf):
         if key.startswith("__"):
             continue
         sb1[L[key]:L[key] + len(data)] = data
+    # The source's Day Care step counter sits 2 bytes past where FRLG+ keeps it. In
+    # FRLG+ that byte is struct padding (the counter is a lone u8 inside a 4-byte
+    # aligned struct), so the copied source byte would linger as stale data and make
+    # the counter unusable as a layout probe. Clear it, but only if it really is
+    # padding, i.e. within the 3 bytes after the FRLG+ counter.
+    if vanilla_L is not None:
+        pad = vanilla_L["sb1_daycare_step_counter"] - L["sb1_daycare_step_counter"]
+        if 0 < pad < 4:
+            sb1[vanilla_L["sb1_daycare_step_counter"]] = 0
     leftover = p["writes"]["__leftover_item_slots"]
     start = L["sb1_bag_held_items"] + 4 * L["bag_held_items_count"]
     sb1[start:start + len(leftover)] = leftover
@@ -167,7 +177,7 @@ def main():
     # Everything below up to the write happens in memory. The converted image must
     # pass its own checksums BEFORE any file is touched, so a failure here leaves
     # the original exactly as it was.
-    sb1, pc = assemble_blocks(p, src, tf)
+    sb1, pc = assemble_blocks(p, src, tf, tv.layout)
     out_raw = savewrite.apply_writes(raw, src["slot"], tf.layout, sb1, pc)
     bad = savewrite.verify_all_checksums(out_raw, savewrite.section_sizes(tf.layout))
     if bad:
@@ -175,6 +185,7 @@ def main():
                  "reproduce: " + "; ".join(bad))
 
     target = args.out or args.save
+    backup = None
     try:
         # Anything this run is about to overwrite is backed up first: the input when
         # converting in place, and equally an existing --out, which may be an
@@ -200,6 +211,24 @@ def main():
         sys.exit("Wrote the file but its checksums no longer reproduce: "
                  + "; ".join(leftover_bad))
     print("Re-checked every recognisable sector checksum on the written file: valid.")
+
+    # The checksums only say the file is well formed. This says it agrees with its
+    # source. Re-read from disk, so it checks what was actually written.
+    with open(target, "rb") as f:
+        written = f.read()
+    problems = verify.verify_conversion(src, written, tv.layout, tf.layout, tv, tf,
+                                        losses=p["losses"])
+    if problems:
+        print("\nVERIFICATION FAILED: the written file disagrees with its source:",
+              file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        recovery = (f"Restore the previous file from the backup, {backup}." if backup
+                    else "The source file was not touched.")
+        sys.exit(f"{target} was written but does not agree with its source, so do not "
+                 f"use it. {recovery}")
+    print("Verified against the source: items conserved, money, coins, flags, vars, "
+          "stats, Pokédex, play time and Day Care step counter all agree.")
 
 
 if __name__ == "__main__":

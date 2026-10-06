@@ -5,6 +5,7 @@ The FRLG+ reader is the writer's test harness (spec 6.2): convert, then read the
 result back with frlgplus.extract and compare it with what went in.
 """
 import io
+import struct
 import os
 import contextlib
 import subprocess
@@ -23,7 +24,11 @@ import migrate  # noqa: E402
 import plan as planmod  # noqa: E402
 import savewrite  # noqa: E402
 import vanilla_frlg  # noqa: E402
+import verify  # noqa: E402
 from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
+from gen3core import u16, u32  # noqa: E402
+from verify import (item_multiset, item_multiset_frlgplus,  # noqa: E402
+                    read_frlgplus_sb1, verify_conversion)
 from vanilla_read import PARTY_MON_SIZE, read_vanilla  # noqa: E402
 
 TV = Tables(layout=vanilla_frlg.LAYOUT)
@@ -348,6 +353,225 @@ def test_the_writer_recomputes_checksums_and_preserves_the_other_slot():
     stale[first_sb1 * SECTOR_SIZE + 0x38] ^= 0xFF
     check(len(savewrite.verify_all_checksums(bytes(stale), sizes)) == 1,
           "verify_all_checksums should flag exactly the damaged sector")
+
+def _convert_to_bytes(raw, **kw):
+    src_path = write_temp(raw)
+    out_path = os.path.join(os.path.dirname(src_path), "c.srm")
+    r = run(src_path, "--apply", "--out", out_path, "--source-version", "fr")
+    check(r.returncode == 0, f"conversion failed: {r.stdout[-300:]} {r.stderr[-400:]}")
+    with open(out_path, "rb") as f:
+        return f.read()
+
+
+def _bag_save():
+    potion, ball, oran = item("Potion"), item("Poké Ball"), item("Oran Berry")
+    return fixtures.build_vanilla_save(items=[(potion, 4)], poke_balls=[(ball, 9)],
+                                       berries=[(oran, 2)], daycare_step=137)
+
+
+def test_item_count_conservation_catches_a_boundary_error():
+    """The check that a wrong pocket boundary cannot pass.
+
+    Phase A established that 'every item in its pocket at quantity 1-999' is true
+    of a vanilla bag read through the FRLG+ layout, so it cannot catch a layout
+    mistake. The multiset of (item, quantity) can.
+
+    Both sides are PLAINTEXT: read_vanilla decrypts, and item_multiset_frlgplus
+    decrypts the converted image's XOR-encrypted quantities.
+    """
+    raw = _bag_save()
+    out = _convert_to_bytes(raw)
+    before = item_multiset(read_vanilla(raw, TV)["pockets"])
+    after = item_multiset_frlgplus(out, TF.layout, TF)
+    check(before == after, f"items not conserved:\n  before {sorted(before.items())}"
+                           f"\n  after  {sorted(after.items())}")
+    check(sum(before.values()) == 15, f"fixture bag should total 15, got {before}")
+
+    # A bag long enough in Key Items to reach vanilla slots 18-19, which FRLG+ keeps
+    # as the TM Case bitfield. Only there do the two layouts stop agreeing on what a
+    # 4-byte slot is: everywhere else both carve the same region into slots.
+    ids = sorted(set(TF.key_item_indices.values()))
+    ids = [i for i in ids if TF.item_pocket(i) == "key_items"][:20]
+    check(len(ids) == 20, "need 20 mappable key items for the boundary fixture")
+    raw = fixtures.build_vanilla_save(key_items=[(i, 1) for i in ids])
+    before = item_multiset(read_vanilla(raw, TV)["pockets"])
+    out = _convert_to_bytes(raw)
+    check(before == item_multiset_frlgplus(out, TF.layout, TF),
+          "a long Key Items pocket should be conserved by a correct conversion")
+
+    # The disproved check. Read the SOURCE bag through the FRLG+ pocket boundaries:
+    # every id is a real item and every quantity is in range, so the old assertion
+    # passes... but the multiset is different, so the new one fails.
+    src = read_vanilla(raw, TV)
+    sb1, key16 = src["sb1"], src["key"] & 0xFFFF
+    wrong, plausible = {}, True
+    for off_key, cnt_key in (("sb1_bag_items", "bag_items_count"),
+                             ("sb1_bag_medicine", "bag_medicine_count"),
+                             ("sb1_bag_held_items", "bag_held_items_count"),
+                             ("sb1_bag_poke_balls", "bag_poke_balls_count"),
+                             ("sb1_bag_berries", "bag_berries_count")):
+        for k in range(TF.layout[cnt_key]):
+            iid = u16(sb1, TF.layout[off_key] + 4 * k)
+            if iid:
+                q = u16(sb1, TF.layout[off_key] + 4 * k + 2) ^ key16
+                plausible &= iid in TF.items and 1 <= q <= 999
+                wrong[iid] = wrong.get(iid, 0) + q
+    check(plausible, "the wrong-layout read should look plausible (that is the point)")
+    check(wrong != before, "reading the bag through the wrong layout must change the "
+                           "multiset, or conservation cannot catch a layout error")
+
+
+def test_conservation_compares_like_with_like_encryption():
+    """The converted image stores quantities encrypted. Reading them raw must NOT
+    equal the plaintext source, which is exactly the confusion item_multiset_frlgplus
+    exists to prevent."""
+    raw = _bag_save()
+    out = _convert_to_bytes(raw)
+    sb1 = read_frlgplus_sb1(out)
+    L = TF.layout
+    stored = u16(sb1, L["sb1_bag_medicine"] + 2)   # Potion is Medicine in FRLG+
+    check(stored == 4 ^ (fixtures.KEY & 0xFFFF), f"stored quantity {stored} should be encrypted")
+    check(item_multiset_frlgplus(out, L, TF)[item("Potion")] == 4, "decrypted quantity should be 4")
+
+
+def test_the_daycare_step_counter_discriminates_the_layouts():
+    """A byte that moves between the layouts, so reading the result with the wrong
+    one is detectable. It needs no decryption, which is why it is the cheap probe."""
+    raw = fixtures.build_vanilla_save(daycare_step=137)
+    out = _convert_to_bytes(raw)
+    v_out = read_vanilla(out, TV)           # deliberately the WRONG layout
+    f_step = read_frlgplus_sb1(out)[TF.layout["sb1_daycare_step_counter"]]
+    check(f_step == 137, f"FRLG+ layout should see 137, got {f_step}")
+    wrong = v_out["sb1"][TV.layout["sb1_daycare_step_counter"]]
+    check(wrong != 137,
+          "the vanilla layout should NOT see the converted step counter — if it does, "
+          "this probe cannot discriminate and the test is worthless")
+    # The same probe on the SOURCE, which is what Phase A measured on the real save
+    # (206 under the vanilla layout, 0 under FRLG+'s).
+    src_sb1 = read_vanilla(raw, TV)["sb1"]
+    check(src_sb1[TV.layout["sb1_daycare_step_counter"]] == 137
+          and src_sb1[TF.layout["sb1_daycare_step_counter"]] == 0,
+          "the source should read 137 under vanilla and 0 under FRLG+")
+    check(TV.layout["sb1_daycare_step_counter"] != TF.layout["sb1_daycare_step_counter"],
+          "the two layouts must put the step counter at different offsets")
+
+
+def _verify(raw, out, losses=()):
+    src = read_vanilla(raw, TV)
+    return verify_conversion(src, out, TV.layout, TF.layout, TV, TF, losses=losses)
+
+
+def test_verify_passes_a_clean_conversion_and_documents_tm_duplicates():
+    tm05 = item("TM05")
+    raw = fixtures.build_vanilla_save(tmhm=[(item("TM01"), 1), (tm05, 3)],
+                                      key_items=[(item("Bike Voucher"), 1)]
+                                      if any(r["name"] == "Bike Voucher" for r in TF.items.values()) else [],
+                                      items=[(item("Potion"), 4)])
+    out = _convert_to_bytes(raw)
+    src = read_vanilla(raw, TV)
+    p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
+    check(_verify(raw, out, p["losses"]) == [],
+          f"a clean conversion should verify: {_verify(raw, out, p['losses'])}")
+    # Without the documented loss, the 2 missing TM05 are an unexplained difference.
+    undocumented = _verify(raw, out)
+    check(any("not conserved" in x and "TM05" in x for x in undocumented),
+          f"undocumented TM loss should be flagged: {undocumented}")
+
+
+def test_verify_flags_each_way_a_result_can_disagree():
+    raw = _bag_save()
+    out = _convert_to_bytes(raw)
+    L = TF.layout
+    src = read_vanilla(raw, TV)
+    best, _ = verify.choose_slot(out)
+    sizes = savewrite.section_sizes(L)
+    where = {i["section_id"]: i["physical_sector"] for i in best["sector_info"]}
+
+    def poke(img, block, offset, value):
+        """Change one byte of SaveBlock1 ("sb1") or SaveBlock2 ("sb2") and re-seal
+        that sector's checksum, so only the content differs and the verifier alone
+        has to notice."""
+        sid = 0 if block == "sb2" else 1 + offset // 0xF80
+        in_sector = offset if block == "sb2" else offset % 0xF80
+        base = where[sid] * SECTOR_SIZE
+        buf = bytearray(img)
+        buf[base + in_sector] = value
+        chunk = bytes(buf[base:base + SECTOR_SIZE])
+        struct.pack_into("<H", buf, base + 0xFF6, savewrite.sector_checksum(chunk, sizes[sid]))
+        return bytes(buf)
+
+    def problems_for(img):
+        return verify_conversion(src, img, TV.layout, L, TV, TF)
+
+    check(savewrite.verify_all_checksums(poke(out, "sb1", 0, out_sb1_byte0(out)), sizes) == [],
+          "poke must re-seal checksums, or these cases test the checksum not the verifier")
+    check(problems_for(poke(out, "sb1", 0, out_sb1_byte0(out))) == [],
+          "an unmodified re-seal should verify")
+    sb1 = read_frlgplus_sb1(out)
+    sb2 = best["sections"][0]
+    cases = {
+        "money": (poke(out, "sb1", L["sb1_money"], sb1[L["sb1_money"]] ^ 1), "money"),
+        "coins": (poke(out, "sb1", L["sb1_coins"], sb1[L["sb1_coins"]] ^ 1), "coins"),
+        "step": (poke(out, "sb1", L["sb1_daycare_step_counter"], 9), "Day Care"),
+        "flags": (poke(out, "sb1", L["sb1_flags"] + 5, 1), "sb1_flags"),
+        "vars": (poke(out, "sb1", L["sb1_vars"] + 7, 1), "sb1_vars"),
+        "stats": (poke(out, "sb1", L["sb1_game_stats"] + 8, sb1[L["sb1_game_stats"] + 8] ^ 1),
+                  "sb1_game_stats"),
+        "pc_items": (poke(out, "sb1", L["sb1_pc_items"], 1), "sb1_pc_items"),
+        "pokedex": (poke(out, "sb2", L["sb2_dex_seen"] + 51, 1), "sb2_pokedex"),
+        "play time": (poke(out, "sb2", L["sb2_play_time_seconds"], 59),
+                      "sb2_play_time_hours"),
+        "an item (a pocket emptied)": (poke(out, "sb1", L["sb1_bag_poke_balls"], 0),
+                                       "not conserved"),
+    }
+    for name, (img, needle) in cases.items():
+        got = problems_for(img)
+        check(any(needle in x for x in got), f"tampering with {name} not flagged: {got}")
+
+
+def out_sb1_byte0(out):
+    return read_frlgplus_sb1(out)[0]
+
+
+def test_the_untouched_list_is_all_actually_compared():
+    """UNTOUCHED once named two fields the size table did not cover, so they were
+    silently skipped. Every entry must resolve to a real, non-empty region."""
+    for name in verify.UNTOUCHED:
+        for L in (TV.layout, TF.layout):
+            off, size = verify._region(L, name)
+            check(size > 0 and off >= 0, f"{name} has no real size in a layout")
+
+
+def test_migrate_exits_nonzero_and_names_the_problem_when_verification_fails():
+    raw = _bag_save()
+    src_path = write_temp(raw)
+    out_path = os.path.join(os.path.dirname(src_path), "c.srm")
+    argv = ["migrate.py", src_path, "--apply", "--out", out_path, "--source-version", "fr"]
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(sys, "argv", argv), \
+            mock.patch.object(verify, "verify_conversion", return_value=["a thing disagreed"]), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            migrate.main()
+            code = 0
+        except SystemExit as e:
+            code = e.code
+    check(code not in (0, None), "a failed verification must exit non-zero")
+    check("a thing disagreed" in err.getvalue(), f"problem not printed: {err.getvalue()}")
+    check("do not use it" in str(code), f"exit message should warn: {code}")
+    # In place: the message must point at the backup.
+    src2 = write_temp(raw, "inplace.srm")
+    argv = ["migrate.py", src2, "--apply", "--source-version", "fr"]
+    with mock.patch.object(sys, "argv", argv), \
+            mock.patch.object(verify, "verify_conversion", return_value=["x"]), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            migrate.main()
+            code = 0
+        except SystemExit as e:
+            code = e.code
+    check("backup" in str(code).lower() and ".bak-" in str(code),
+          f"in-place failure should name the backup: {code}")
 
 
 def main():
