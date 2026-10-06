@@ -1,4 +1,9 @@
-# FRLG+ Save Extractor
+# frlg-plus-tools
+
+Tools for Pokémon FireRed & LeafGreen+ (FRLG+) save files: a save extractor skill, a shared
+Gen 3 core, and standalone save utilities.
+
+## FRLG+ Save Extractor
 
 A Claude skill that decodes a Pokémon FireRed & LeafGreen+ (FRLG+) GBA save file into a
 structured report. It reads the trainer and rival name, the Key System settings (FRLG+'s
