@@ -30,6 +30,7 @@ it changes.
 |---|---|---|
 | `skills/frlg-save-extractor/` | yes | never |
 | `shared/` (the Gen 3 core, the FRLG+ and vanilla profiles, the table generator) | library code that the skill carries as generated copies and `extras/` imports from them; it never touches a save on its own | no |
+| `skills/frlg-save-migrator/` | yes | yes, with a backup and a plan-only default |
 | `extras/fix_boxed_hp.py` | yes | yes, with a backup and a dry run by default |
 
 `shared/` is the original source of that code; `./build.sh` copies it into the skill package
@@ -95,6 +96,11 @@ and they do not all go stale at the same time:
 | `generate_tables.py --game vanilla --repo ../pokefirered` | `scripts/data/vanilla/save_layout.txt` and `scripts/data/vanilla/generated.json` — the offsets a *vanilla* FR/LG save is read with | the `pokefirered` checkout moves, or a new save-layout key is added |
 | `generate_remaps.py --vanilla ../pokefirered --frlgplus ../FRLG-Plus` | `scripts/data/vanilla/remap_maps.txt`, `remap_layouts.txt` and `remap_mapsec.txt` — the vanilla → FRLG+ map, layout and map-section ID translations | *either* checkout moves, since the IDs are paired up by name across both trees |
 
+Each generator also takes `--skill`, which picks the package it writes into, and the default
+is `frlg-save-extractor`. The migrator carries its own copy of every table, so
+`--skill frlg-save-migrator` writes *that* package's tables: a new FRLG+ version means running
+each generator twice, once per skill, and the same applies to the vanilla and remap runs.
+
 Both of the last two need a [pret/pokefirered](https://github.com/pret/pokefirered) checkout
 as well as the FRLG+ one. Regenerating only the FRLG+ tables leaves everything under
 `scripts/data/vanilla/` untouched and therefore silently stale, so after an FRLG+ version
@@ -106,8 +112,13 @@ git clone https://github.com/pret/pokefirered ../pokefirered
 python3 shared/tools/generate_tables.py --repo ../FRLG-Plus
 python3 shared/tools/generate_tables.py --game vanilla --repo ../pokefirered
 python3 shared/tools/generate_remaps.py --vanilla ../pokefirered --frlgplus ../FRLG-Plus
+# and again for the migrator's own copy of the tables
+python3 shared/tools/generate_tables.py --skill frlg-save-migrator --repo ../FRLG-Plus
+python3 shared/tools/generate_tables.py --skill frlg-save-migrator --game vanilla --repo ../pokefirered
+python3 shared/tools/generate_remaps.py --skill frlg-save-migrator --vanilla ../pokefirered --frlgplus ../FRLG-Plus
 ./build.sh
 python3 skills/frlg-save-extractor/tests/run_all.py
+python3 skills/frlg-save-migrator/tests/run_all.py
 ```
 
 Run the generators from `shared/tools/`, not from the skill's copies in

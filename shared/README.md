@@ -1,6 +1,6 @@
 # shared/
 
-One copy of the Gen 3 save code, vendored into each skill package by
+One copy of the Gen 3 save code, vendored into each skill package (the extractor and the migrator) by
 `build.sh`. The copies under `skills/*/scripts/` and `skills/*/tools/` are
 committed and are **generated** — edit the file here and re-run `./build.sh`.
 
@@ -13,6 +13,7 @@ would let the reader validate a save the writer corrupted.
 | `gen3core.py` | sectors, checksums, the charmap, substructure crypto, stat and nature maths. No game-specific offsets or field semantics — not even which save layout to load, which is why `Tables` takes a required, keyword-only `layout=<profile>.LAYOUT`. |
 | `frlgplus.py` | the FRLG+ v1.5.1 profile: its save layout, bag pockets, Key System, and the boxed HP/status/forme halfword in both directions (`decode_box_padding` / `encode_box_padding`). |
 | `vanilla_frlg.py` | the vanilla FR/LG profile: its own save layout, the vanilla → FRLG+ ID remaps, and the fact that the same halfword is genuinely padding there. |
+| `vanilla_read.py` | reads a vanilla FR/LG save through the vanilla profile, for the migrator. |
 | `tools/generate_tables.py` | how to read a save layout and the name tables out of a decomp checkout, for `--game frlgplus` and `--game vanilla`. |
 | `tools/generate_remaps.py` | how to pair vanilla and FRLG+ map, layout and map-section IDs up by name to produce the remap tables. |
 | `tools/cparse.py` | the C-header parsing (`#define`s, enums, struct offsets) both generators are built on. |
