@@ -595,13 +595,145 @@ def test_every_box_pokemon_slot_a_save_can_hold_is_in_the_inventory():
                 + 1 + V["daycare_mon_count"])
     check(len(slots) == expected, f"{len(slots)} slots, expected {expected}")
     check(len(slots) == 429, f"a FireRed save holds 429 BoxPokemon, not {len(slots)}")
-    check(len({(blk, off) for _i, _l, blk, off in slots}) == len(slots),
+    check(len({(blk, off) for _i, _l, blk, off, _n in slots}) == len(slots),
           "two slots share an offset")
+    # Every slot in the vanilla inventory must have a counterpart in FRLG+'s, or a
+    # Pokemon has nowhere to be written to and nothing to be compared against.
+    check({i for i, *_ in slots} == {i for i, *_ in box_mon_slots(TF.layout)},
+          "the two layouts' slot inventories do not have the same identities")
 
 
 def _verify(raw, out, losses=()):
     src = read_vanilla(raw, TV)
     return verify_conversion(src, out, TV.layout, TF.layout, TV, TF, losses=losses)
+
+
+_REAL_REWRITE = gen3core.rewrite_substructures
+
+
+def _repack(mon, subs):
+    """Re-encrypt and re-checksum one Pokemon from edited PLAINTEXT substructures,
+    exactly as the real writer does. Used to inject a fault that reproduces every
+    checksum, which is the only kind the other checks cannot see."""
+    b = bytearray(mon)
+    pid, otid = u32(b, 0), u32(b, 4)
+    plain = b"".join(subs[c] for c in gen3core.SUB_ORDERS[pid % 24])
+    struct.pack_into("<H", b, 0x1C, sum(struct.unpack("<24H", plain)) & 0xFFFF)
+    key = pid ^ otid
+    for i in range(0, 48, 4):
+        struct.pack_into("<I", b, 32 + i, struct.unpack_from("<I", plain, i)[0] ^ key)
+    return bytes(b)
+
+
+def _halfword_two_bytes_early(mon, *, g_halfword=None, met_location=None):
+    """The fault: boxHP written at G[8:10] (ppBonuses and friendship) rather than
+    G[10:12]. An off-by-one inside a substructure, which is what this path can
+    plausibly get wrong."""
+    out = _REAL_REWRITE(mon, g_halfword=None, met_location=met_location)
+    subs = dict(gen3core.decrypt_substructures(out)[0])
+    g = bytearray(subs["G"])
+    struct.pack_into("<H", g, 8, (g_halfword or 0) & 0xFFFF)
+    subs["G"] = bytes(g)
+    return _repack(out, subs)
+
+
+def _convert_in_process(raw, version="fr"):
+    """Assemble a conversion without going through the CLI, so a fault can be
+    injected into the rewrite path."""
+    src = read_vanilla(raw, TV)
+    p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version=version)
+    sb1, pc = migrate.assemble_blocks(p, src, TF, TV.layout)
+    return src, p, savewrite.apply_writes(raw, src["slot"], TF.layout, sb1, pc)
+
+
+def _pokemon_everywhere_save():
+    """Party, boxes and both Day Cares occupied: all four kinds of physical slot."""
+    boxes = empty_boxes()
+    boxes[0][0] = fixtures.mon("Pikachu", 25, pid=0x33445566, party=False)
+    boxes[13][29] = fixtures.mon("Gyarados", 40, pid=0x778899AA, party=False)
+    stride = TV.layout["daycare_mon_size"]
+    four = bytearray(stride * TV.layout["daycare_mon_count"])
+    four[0:80] = fixtures.mon("Squirtle", 18, pid=0x0A0B0C0D, party=False)
+    four[stride:stride + 80] = fixtures.mon("Charmander", 22, pid=0x1A2B3C4D, party=False)
+    return fixtures.build_vanilla_save(
+        party=[fixtures.mon("Bulbasaur", 5, pid=0x01020304),
+               fixtures.mon("Abra", 16, pid=0x05060708)],
+        boxes=boxes, daycare_mons=bytes(four),
+        route5_daycare_mon=fixtures.mon("Nidoking", 30, pid=0x5E6F7A8B, party=False))
+
+
+def test_a_fault_in_the_rewrite_path_that_reproduces_every_checksum_is_caught():
+    """Spec 6.2's per-Pokemon equality, and the one way the migrator can corrupt a
+    save with nothing to notice.
+
+    rewrite_substructures recomputes the internal checksum over whatever plaintext
+    it produced, and savewrite recomputes the sector checksum over whatever bytes it
+    was handed. So a wrong offset inside a substructure yields a save where every
+    checksum reproduces, items are conserved, the Day Care step probe passes and
+    every UNTOUCHED region matches. Only comparing the Pokemon themselves sees it.
+    """
+    raw = _pokemon_everywhere_save()
+    with mock.patch.object(gen3core, "rewrite_substructures",
+                           _halfword_two_bytes_early):
+        src, p, out = _convert_in_process(raw)
+    # Every other check still passes on the faulty image: that is the point.
+    check(savewrite.verify_all_checksums(out, savewrite.section_sizes(TF.layout)) == [],
+          "the injected fault must still reproduce every sector checksum")
+    problems = verify_conversion(src, out, TV.layout, TF.layout, TV, TF,
+                                 losses=p["losses"])
+    check(problems, "the verifier did not notice a fault inside substructure G")
+    check(any("substructure G" in x for x in problems),
+          f"the problem should name substructure G: {problems[:4]}")
+    # Every occupied slot is affected, so every kind of slot should be named.
+    text = " ".join(problems)
+    for label in ("party 1", "box 1 slot 1", "box 14 slot 30", "Route 5 Day Care",
+                  "Four Island Day Care slot 1"):
+        check(label in text, f"the report never names {label}: {problems[:4]}")
+
+
+def test_the_per_pokemon_comparison_passes_a_clean_conversion():
+    """It must allow exactly the two fields the conversion writes - the boxed
+    HP/status/forme halfword and metLocation - and nothing else."""
+    raw = _pokemon_everywhere_save()
+    src, p, out = _convert_in_process(raw)
+    problems = verify_conversion(src, out, TV.layout, TF.layout, TV, TF,
+                                 losses=p["losses"])
+    check(problems == [], f"a clean conversion should verify: {problems}")
+    # And the halfword really did change in every occupied slot, so the comparison
+    # is passing because it excludes that field rather than because nothing moved.
+    f_sb1 = read_frlgplus_sb1(out)
+    off = TF.layout["sb1_party"]
+    before = gen3core.decrypt_substructures(src["sb1"][off:off + 80])[0]["G"]
+    after = gen3core.decrypt_substructures(f_sb1[off:off + 80])[0]["G"]
+    check(before[10:12] != after[10:12], "the fixture's boxHP halfword did not change")
+    check(before[:10] == after[:10], "nothing else in G should have moved")
+
+
+def test_a_damaged_party_tail_is_caught_too():
+    """A party Pokemon's stored level, HP and stats live past 0x50, outside the
+    encrypted region, and are carried through untouched."""
+    raw = _pokemon_everywhere_save()
+    src, p, out = _convert_in_process(raw)
+    # Damage the first party Pokemon's stored level in the written image, then
+    # re-checksum its sector, so the only detectable difference is the Pokemon.
+    off = TF.layout["sb1_party"] + 0x54
+    section = 1 + off // SECTOR_DATA_SIZE
+    best, _ = gen3core.choose_slot(out)
+    phys = {i["section_id"]: i["physical_sector"] for i in best["sector_info"]
+            if i.get("signature_ok")}[section]
+    sector = phys * SECTOR_SIZE
+    broken = bytearray(out)
+    broken[sector + off % SECTOR_DATA_SIZE] ^= 0x10
+    sizes = savewrite.section_sizes(TF.layout)
+    struct.pack_into("<H", broken, sector + 0xFF6, savewrite.sector_checksum(
+        broken[sector:sector + SECTOR_SIZE], sizes[section]))
+    broken = bytes(broken)
+    check(savewrite.verify_all_checksums(broken, sizes) == [],
+          "the damaged image must still pass its sector checksums")
+    problems = verify_conversion(src, broken, TV.layout, TF.layout, TV, TF,
+                                 losses=p["losses"])
+    check(any("party tail" in x for x in problems),
+          f"a changed party tail should be reported: {problems[:4]}")
 
 
 def test_verify_passes_a_clean_conversion_and_documents_tm_duplicates():

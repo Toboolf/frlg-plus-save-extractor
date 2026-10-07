@@ -72,11 +72,20 @@ offset. It also compares these regions byte for byte between source and result:
 flags, script variables, game stats, PC item storage, the Pokédex and play time
 (`UNTOUCHED` in `verify.py`), plus money, coins and the encryption key.
 
+It then compares **all 429 Pokémon**, one physical slot at a time, source against
+result: the header (less the substructure checksum, which has to be recomputed), the
+party tail, and all 48 plaintext substructure bytes except the two fields the
+conversion writes — the boxed HP/status/forme halfword and the met location. This is
+the check that can see a fault nothing else can: the Pokémon rewrite recomputes the
+internal checksum over whatever plaintext it produced, and the sector writer
+recomputes the sector checksum over whatever bytes it was handed, so a wrong
+substructure order or a wrong offset inside one would otherwise yield a file where
+every checksum reproduces, items are conserved and every untouched region matches.
+
 The rest of the "carries" table is **carried by construction and not re-checked**: player
-name, gender, trainer and secret IDs, options, mail, the Fame Checker, the Trainer
-Tower, and every Pokémon's bytes other than its padding halfword. Those blocks are never
-rewritten, so there is nothing for a conversion to change, but nothing compares them
-afterwards either.
+name, gender, trainer and secret IDs, options, mail, the Fame Checker and the Trainer
+Tower. Those blocks are never rewritten, so there is nothing for a conversion to
+change, but nothing compares them afterwards either.
 
 If a check fails the tool exits non-zero and names it, **and the file it wrote is left on
 disk**. Do not load it; delete it. What is left to go back to depends on how you ran it:

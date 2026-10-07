@@ -22,7 +22,9 @@ in the same domain.
 """
 from __future__ import annotations
 
-from gen3core import SECTOR_DATA_SIZE, choose_slot, u16, u32
+from gen3core import (SECTOR_DATA_SIZE, choose_slot, decrypt_substructures, u16,
+                      u32)
+from vanilla_read import box_mon_slots
 
 # Fields the specification says must carry unchanged: (key, how to size it).
 # The two sb2 fields are read from SaveBlock2; the rest from SaveBlock1.
@@ -68,6 +70,76 @@ def read_frlgplus_sb1(raw):
     """The active slot's SaveBlock1 from a converted image."""
     best, _ = choose_slot(raw)
     return b"".join(best["sections"].get(i, b"\0" * SECTOR_DATA_SIZE) for i in range(1, 5))
+
+
+def read_frlgplus_pc(raw):
+    """The active slot's PokemonStorage from a converted image."""
+    best, _ = choose_slot(raw)
+    return b"".join(best["sections"].get(i, b"\0" * SECTOR_DATA_SIZE) for i in range(5, 14))
+
+
+# The only two fields rules 3 and 4 are allowed to change inside a Pokémon: the last
+# halfword of substructure G (FRLG+'s boxHP:10, boxStatus:4, forme:2) and byte 1 of
+# substructure M (metLocation). Byte 0x1C of the header is the substructure checksum,
+# which rule 3 must recompute; everything else, in all 48 plaintext substructure bytes
+# and the rest of the header and the party tail, has to come across untouched.
+def _pokemon_differences(before, after):
+    """How one Pokémon's converted bytes differ from its source's, outside what the
+    conversion may write.
+
+    This is the check that can see a fault nothing else can. rewrite_substructures
+    recomputes the internal checksum over whatever plaintext it produced and savewrite
+    recomputes the sector checksum over whatever bytes it was handed, so a wrong
+    substructure order, a wrong offset within G or M, or a truncated slice yields a
+    save where every checksum reproduces, items are conserved, the Day Care step probe
+    passes and every UNTOUCHED region matches.
+
+    Comparing the PLAINTEXT rather than the stored bytes is deliberate: the ciphertext
+    of an unchanged substructure is unchanged only because the key is unchanged, and
+    that is a separate fact this would otherwise be silently relying on.
+    """
+    if len(before) != len(after):
+        return [f"its stored size changed from {len(before)} to {len(after)}"]
+    out = []
+    if before[:0x1C] != after[:0x1C] or before[0x1E:0x20] != after[0x1E:0x20]:
+        out.append("its header changed (PID, OT, nickname, language, flags or markings)")
+    if before[0x50:] != after[0x50:]:
+        out.append("its party tail changed (level, stored HP, status or stats)")
+    a_subs, _ = decrypt_substructures(before)
+    b_subs, _ = decrypt_substructures(after)
+    for name in ("G", "A", "E", "M"):
+        x, y = bytearray(a_subs[name]), bytearray(b_subs[name])
+        if name == "G":
+            x[10:12] = y[10:12] = b"\0\0"     # rule 3: boxHP, boxStatus, forme
+        if name == "M":
+            x[1] = y[1] = 0                   # rule 4: metLocation
+        if bytes(x) != bytes(y):
+            out.append(f"substructure {name} changed")
+    return out
+
+
+def compare_every_pokemon(src, sb1, pc, vanilla_L, plus_L):
+    """Spec 6.2: every one of the 429 physical slots, source against result.
+
+    The slot inventory comes from the generated layout (vanilla_read.box_mon_slots),
+    so a Pokémon the conversion forgot or wrote to the wrong place is a difference
+    here rather than something no check addresses. Source and result are paired by
+    slot IDENTITY, because the Four Island Day Care sits four bytes earlier in FRLG+.
+    """
+    problems = []
+    before_blocks = {"sb1": src["sb1"], "pc": src["pc"]}
+    after_blocks = {"sb1": sb1, "pc": pc}
+    after_slots = {ident: (blk, off, size)
+                   for ident, _label, blk, off, size in box_mon_slots(plus_L)}
+    for ident, label, blk, off, size in box_mon_slots(vanilla_L):
+        if ident not in after_slots:
+            problems.append(f"{label}: the FRLG+ layout has no such slot")
+            continue
+        a_blk, a_off, a_size = after_slots[ident]
+        before = before_blocks[blk][off:off + size]
+        after = after_blocks[a_blk][a_off:a_off + a_size]
+        problems += [f"{label}: {why}" for why in _pokemon_differences(before, after)]
+    return problems
 
 
 def item_multiset_frlgplus(raw, plus_L, tf):
@@ -159,6 +231,9 @@ def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
         problems.append("items are not conserved: " + ", ".join(
             f"{tf.item_name(i)} expected {expected.get(i, 0)} got {got.get(i, 0)}"
             for i in diff[:8]) + (" ..." if len(diff) > 8 else ""))
+
+    problems += compare_every_pokemon(src, sb1, read_frlgplus_pc(out_raw),
+                                      vanilla_L, plus_L)
 
     step_src = src["sb1"][vanilla_L["sb1_daycare_step_counter"]]
     step_out = sb1[plus_L["sb1_daycare_step_counter"]]

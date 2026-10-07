@@ -38,21 +38,29 @@ def daycare_mon_slots(L):
 
 def box_mon_slots(L):
     """Every `struct BoxPokemon` a FireRed/LeafGreen save can hold, as
-    (identity, label, block, offset within that block).
+    (identity, label, block, offset within that block, size of the struct there).
 
-    429 of them: MAX_PARTY party slots (whose first 80 bytes are the box form),
+    429 of them: MAX_PARTY `struct Pokemon` party slots (whose first 80 bytes are the
+    box form and whose tail past 0x50 holds the stored level, HP and stats),
     `total_boxes` x `in_box_count` PC slots, and the three Day Care slots. The list
     is derived from the generated layout so that "every Pokémon in the save" is a
     property of the table rather than a sentence in a comment — a count that changed
     or a region that moved shows up here instead of leaving Pokémon unconverted.
+
+    The identities are stable across layouts, which is how a caller pairs a source
+    slot with the result's: the Four Island Day Care is the one region that sits at a
+    different offset in the two layouts.
     """
     slots = [(f"party_{i + 1}", f"party {i + 1}", "sb1",
-              L["sb1_party"] + PARTY_MON_SIZE * i) for i in range(MAX_PARTY)]
+              L["sb1_party"] + PARTY_MON_SIZE * i, PARTY_MON_SIZE)
+             for i in range(MAX_PARTY)]
     for bx in range(L["total_boxes"]):
         for sl in range(L["in_box_count"]):
             slots.append((f"box_{bx + 1}_{sl + 1}", f"box {bx + 1} slot {sl + 1}", "pc",
-                          L["pc_boxes"] + (bx * L["in_box_count"] + sl) * BOX_MON_SIZE))
-    slots += [(ident, label, "sb1", off) for ident, label, off in daycare_mon_slots(L)]
+                          L["pc_boxes"] + (bx * L["in_box_count"] + sl) * BOX_MON_SIZE,
+                          BOX_MON_SIZE))
+    slots += [(ident, label, "sb1", off, BOX_MON_SIZE)
+              for ident, label, off in daycare_mon_slots(L)]
     return slots
 
 
