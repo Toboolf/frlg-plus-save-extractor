@@ -476,6 +476,11 @@ def gen_save_layout(repo, consts, out, game="frlgplus"):
 MASTER_TRAINER_BITS = 153
 
 
+# The field right after SaveBlock1.seen1, which is where that 52-byte array ends.
+# FRLG+ renamed vanilla's berryBlenderRecords to filler_062C and carved
+# masterTrainerTitle out of its last byte, without moving the field itself.
+_AFTER_SEEN1 = {"frlgplus": "filler_062C", "vanilla": "berryBlenderRecords"}
+
 VANILLA_POCKETS = {"items": "BAG_ITEMS_COUNT", "key_items": "BAG_KEYITEMS_COUNT",
                    "poke_balls": "BAG_POKEBALLS_COUNT", "tmhm": "BAG_TMHM_COUNT",
                    "berries": "BAG_BERRIES_COUNT"}
@@ -644,9 +649,31 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb1_route5_daycare_mon"] = annotated("route5DayCareMon")
     if game != "vanilla":        # the Key System flags are an FRLG+ addition
         layout["sb1_last_viewed_pokedex_entry"] = annotated("lastViewedPokedexEntry")
+        # keyFlags has no annotation of its own: it was carved in after a u16, so
+        # the walk is lastViewedPokedexEntry + 2. Its WIDTH matters as much as its
+        # offset, because a migration has to zero the whole struct rather than only
+        # the halfword the bitfields occupy, so count the u16 storage units the
+        # source declares and check the walk lands on trainerRematchStepCounter.
         layout["sb1_key_flags"] = layout["sb1_last_viewed_pokedex_entry"] + 2
+        layout["key_flags_bytes"] = _bitfield_struct_size(text, "KeySystemFlags")
+        after_flags = layout["sb1_key_flags"] + layout["key_flags_bytes"]
+        if after_flags != annotated("trainerRematchStepCounter"):
+            raise SystemExit(
+                f"struct KeySystemFlags walks from 0x{layout['sb1_key_flags']:X} to "
+                f"0x{after_flags:X} but SaveBlock1.trainerRematchStepCounter is annotated "
+                f"at 0x{annotated('trainerRematchStepCounter'):X} — the Key System "
+                f"struct changed size.")
     if game != "vanilla":        # Master Trainers is an FRLG+ addition
+        # masterTrainerTitle has no annotation either: it was carved out of
+        # filler_062C, which FRLG+ shortened from 6 bytes to 5. One u8, so the walk
+        # has to land exactly on lastViewedPokedexEntry, which IS annotated.
         layout["sb1_master_trainer_title"] = annotated("filler_062C") + 5
+        if layout["sb1_master_trainer_title"] + 1 != annotated("lastViewedPokedexEntry"):
+            raise SystemExit(
+                f"masterTrainerTitle walks to 0x{layout['sb1_master_trainer_title']:X} but "
+                f"SaveBlock1.lastViewedPokedexEntry is annotated at "
+                f"0x{annotated('lastViewedPokedexEntry'):X}, so the byte carved out of "
+                f"filler_062C is not where this says it is.")
         layout["sb1_master_trainer_flags"] = annotated("unused_3A94") + 44
         # masterTrainerFlags[20] was carved out of unused_3A94's original 64 bytes, so
         # nothing between there and registeredTexts changed size and that field's
@@ -716,6 +743,55 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb2_dex_seen"] = dex_at + seen
     layout["dex_flag_bytes"] = seen - owned
 
+    # ---- regions spec 5.3 says a conversion must carry unchanged.
+    # The migrator's verifier compares each of them byte for byte between source and
+    # result, so each needs a length as well as an offset, and neither may be
+    # hand-written. The length is the distance to the next annotated field, which is
+    # how roamer_size is derived too; on top of that each gets one cross-check against
+    # a value that comes from somewhere else, so a stale annotation on either end
+    # fails here rather than quietly resizing a comparison.
+    layout["sb1_seen1"] = annotated("seen1")
+    layout["seen1_bytes"] = annotated(_AFTER_SEEN1[game]) - layout["sb1_seen1"]
+    layout["sb1_seen2"] = annotated("seen2")
+    layout["seen2_bytes"] = annotated("rivalName") - layout["sb1_seen2"]
+    # Both are DEX_FLAGS_NO arrays, so both must be as long as the Pokedex's own
+    # `seen` array, whose length came from struct Pokedex's annotations above.
+    for key in ("seen1", "seen2"):
+        if layout[f"{key}_bytes"] != layout["dex_flag_bytes"]:
+            raise SystemExit(
+                f"SaveBlock1.{key} spans {layout[f'{key}_bytes']} bytes but a Pokedex flag "
+                f"array is {layout['dex_flag_bytes']} — one of the two annotations is stale.")
+
+    layout["sb1_mail"] = annotated("mail")
+    layout["mail_bytes"] = annotated("additionalPhrases") - layout["sb1_mail"]
+    if layout["mail_bytes"] <= 0 or layout["mail_bytes"] % consts["MAIL_COUNT"]:
+        raise SystemExit(f"SaveBlock1.mail spans {layout['mail_bytes']} bytes, which is not "
+                         f"{consts['MAIL_COUNT']} whole struct Mail")
+
+    layout["sb1_fame_checker"] = annotated("fameChecker")
+    layout["fame_checker_bytes"] = annotated("unused_3A94") - layout["sb1_fame_checker"]
+    after_rival = annotated("rivalName") + consts["PLAYER_NAME_LENGTH"] + 1
+    if layout["sb1_fame_checker"] != after_rival:
+        raise SystemExit(f"SaveBlock1.fameChecker is annotated at "
+                         f"0x{layout['sb1_fame_checker']:X} but rivalName ends at "
+                         f"0x{after_rival:X}")
+    if layout["fame_checker_bytes"] <= 0:
+        raise SystemExit("SaveBlock1.fameChecker and unused_3A94 are annotated out of order")
+
+    # trainerTower is SaveBlock1's last field, so its length is whatever is left of
+    # the struct — which is the cross-check: it has to divide into whole challenges.
+    layout["sb1_trainer_tower"] = annotated("trainerTower")
+    layout["trainer_tower_bytes"] = layout["sb1_size"] - layout["sb1_trainer_tower"]
+    if annotated("towerChallengeId") + 4 != layout["sb1_trainer_tower"]:
+        raise SystemExit(f"SaveBlock1.trainerTower is annotated at "
+                         f"0x{layout['sb1_trainer_tower']:X}, not one u32 past "
+                         f"towerChallengeId at 0x{annotated('towerChallengeId'):X}")
+    if (layout["trainer_tower_bytes"] <= 0
+            or layout["trainer_tower_bytes"] % consts["NUM_TOWER_CHALLENGE_TYPES"]):
+        raise SystemExit(f"trainerTower runs {layout['trainer_tower_bytes']} bytes to the end "
+                         f"of SaveBlock1, which is not "
+                         f"{consts['NUM_TOWER_CHALLENGE_TYPES']} whole challenges")
+
     ps = cparse.repo_path(repo, "include/pokemon_storage_system.h")
     with open(ps, encoding="utf-8") as f:
         pstext = f.read()
@@ -746,6 +822,34 @@ def compute_layout(repo, consts, game="frlgplus"):
 def _hdef(text, name):
     m = re.search(r"#define\s+" + name + r"\s+(\S+)", text)
     return int(m.group(1), 0)
+
+
+def _bitfield_struct_size(text, name):
+    """sizeof() a struct whose every member is a u16 or a u16 bitfield.
+
+    Bitfields pack into 16-bit storage units in declaration order and a member
+    that would not fit opens a new unit, so the size is 2 x the number of units.
+    Used for struct KeySystemFlags, where the migration has to zero the whole
+    struct: its bitfields fill one u16 and `padding2` is a second one, and writing
+    only the first would leave the second inheriting vanilla's bytes.
+    """
+    start = text.index(f"struct {name}")
+    body = text[start:start + cparse._matching_brace(text[start:], text[start:].index("{")) + 1]
+    units, bits = 0, 0
+    for m in re.finditer(r"\bu16\s+\w+\s*(?::\s*(\d+))?\s*;", body):
+        if m.group(1) is None:                 # a plain u16 always starts a new unit
+            units, bits = units + 1, 0
+            continue
+        width = int(m.group(1))
+        if width > 16:
+            raise SystemExit(f"struct {name}: a u16 bitfield cannot be {width} bits wide")
+        if bits == 0 or bits + width > 16:
+            units, bits = units + 1, width
+        else:
+            bits += width
+    if not units:
+        raise SystemExit(f"struct {name} has no u16 members; it is not a bitfield struct")
+    return 2 * units
 
 
 def _braced_list(expr):

@@ -1,9 +1,9 @@
 {
- "generated_at": "2026-10-06 20:47 UTC",
+ "generated_at": "2026-10-07 07:21 UTC",
  "repo_name": "pokefirered",
  "repo_commit": "037335f",
  "rows": {
-  "save_layout": 78
+  "save_layout": 88
  },
  "save_layout": {
   "sb1_money": "0x290",
@@ -70,6 +70,16 @@
   "sb2_dex_owned": "0x28",
   "sb2_dex_seen": "0x5C",
   "dex_flag_bytes": "0x34",
+  "sb1_seen1": "0x5F8",
+  "seen1_bytes": "0x34",
+  "sb1_seen2": "0x3A18",
+  "seen2_bytes": "0x34",
+  "sb1_mail": "0x2CD0",
+  "mail_bytes": "0x240",
+  "sb1_fame_checker": "0x3A54",
+  "fame_checker_bytes": "0x40",
+  "sb1_trainer_tower": "0x3D38",
+  "trainer_tower_bytes": "0x30",
   "pc_boxes": "0x4",
   "pc_box_names": "0x8344",
   "pc_box_wallpapers": "0x83C2",

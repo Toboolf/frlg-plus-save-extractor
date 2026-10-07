@@ -251,7 +251,7 @@ def test_vanilla_walk_refuses_swapped_pocket_counts():
     """Swapping two pocket counts keeps the total, so the seen1 landing check still
     passes; only the per-pocket annotation check catches the wrong middle offsets."""
     if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
-        SKIPPED.append("test_vanilla_walk_refuses_swapped_pocket_counts")
+        SKIPPED.append(f"test_vanilla_walk_refuses_swapped_pocket_counts (no pokefirered checkout at {VANILLA_SRC})")
         return
     with tempfile.TemporaryDirectory() as tmp:
         _copy_vanilla_tree(tmp)
@@ -276,7 +276,7 @@ def test_vanilla_walk_refuses_swapped_pocket_counts():
 def test_vanilla_run_names_a_missing_file():
     """Every header the vanilla layout reads is refused by name, not with a KeyError."""
     if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
-        SKIPPED.append("test_vanilla_run_names_a_missing_file")
+        SKIPPED.append(f"test_vanilla_run_names_a_missing_file (no pokefirered checkout at {VANILLA_SRC})")
         return
     for rel in generate_tables.REQUIRED["vanilla"]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -301,7 +301,7 @@ def test_vanilla_run_names_a_missing_file():
 def test_quest_log_stride_is_checked_against_the_scene_struct():
     """The stride has no annotation of its own; QuestLogScene's `end[0]` is the check."""
     if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
-        SKIPPED.append("test_quest_log_stride_is_checked_against_the_scene_struct")
+        SKIPPED.append(f"test_quest_log_stride_is_checked_against_the_scene_struct (no pokefirered checkout at {VANILLA_SRC})")
         return
     with tempfile.TemporaryDirectory() as tmp:
         _copy_vanilla_tree(tmp)
@@ -328,7 +328,7 @@ def test_skill_option_writes_into_the_named_package_only():
     real skills/ directory is never written to.
     """
     if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
-        SKIPPED.append("test_skill_option_writes_into_the_named_package_only")
+        SKIPPED.append(f"test_skill_option_writes_into_the_named_package_only (no pokefirered checkout at {VANILLA_SRC})")
         return
     tools_src = os.path.join(HERE, "..", "tools")
     with tempfile.TemporaryDirectory() as tmp:
@@ -347,6 +347,167 @@ def test_skill_option_writes_into_the_named_package_only():
         check(os.path.isfile(out), "tables did not land in the named package")
         check(_fingerprint(ext_data) == tmp_before, "the extractor's data changed under --skill")
         check(_fingerprint(DATA) == real_before, "the real extractor data changed under --skill")
+
+
+# The FRLG+ tree, for the cross-checks on fields vanilla does not have at all
+# (the Key System flags and the Master Trainer title). Same skip-if-absent rule.
+PLUS_SRC = os.path.expanduser(os.environ.get("FRLG_PLUS_REPO", "~/projects/FRLG-Plus"))
+# Everything compute_layout(game="frlgplus") reads. Smaller than REQUIRED["frlgplus"],
+# which also covers the name and encounter tables this walk never touches.
+PLUS_LAYOUT_FILES = ["include/global.h", "include/save.h",
+                     "include/pokemon_storage_system.h",
+                     "include/constants/global.h", "include/constants/items.h",
+                     "include/constants/species.h", "include/constants/game_stat.h",
+                     "include/constants/opponents.h", "include/constants/vars.h",
+                     "include/constants/flags.h"]
+
+
+def _walk_plus(repo):
+    consts = Consts()
+    for rel in PLUS_LAYOUT_FILES:
+        if rel.startswith("include/constants/"):
+            consts.load_defines(os.path.join(repo, rel))
+    return generate_tables.compute_layout(repo, consts, "frlgplus")
+
+
+def _copy_plus_tree(dst):
+    for rel in PLUS_LAYOUT_FILES:
+        os.makedirs(os.path.dirname(os.path.join(dst, rel)), exist_ok=True)
+        shutil.copy(os.path.join(PLUS_SRC, rel), os.path.join(dst, rel))
+
+
+def _plus_walk_refuses(name, doctor, needles):
+    """Doctor a copy of the FRLG+ headers and check compute_layout refuses by name."""
+    if not os.path.isfile(os.path.join(PLUS_SRC, "include/global.h")):
+        SKIPPED.append(f"{name} (no FRLG+ checkout at {PLUS_SRC})")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_plus_tree(tmp)
+        check(_walk_plus(tmp)["sb1_key_flags"] == 0x634, "undoctored FRLG+ tree should walk")
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = doctor(text)
+        check(doctored != text, f"{name}: could not doctor the header")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk_plus(tmp)
+        except SystemExit as e:
+            for needle in needles:
+                check(needle in str(e), f"{name}: refusal does not mention {needle!r}: {e}")
+        else:
+            check(False, f"{name}: the doctored header should have been refused")
+
+
+def test_the_untouched_regions_spec_53_names_are_generated_in_both_layouts():
+    """Spec 5.3's do-not-touch list is only assertable if each region has an offset
+    AND a length in both layouts. These five had neither, so verify.py could not
+    compare them: mail, both unreferenced Pokédex-seen copies, the Fame Checker and
+    the Trainer Tower."""
+    expect = {"sb1_mail": 0x2CD0, "mail_bytes": 576,
+              "sb1_seen1": 0x5F8, "seen1_bytes": 52,
+              "sb1_seen2": 0x3A18, "seen2_bytes": 52,
+              "sb1_fame_checker": 0x3A54, "fame_checker_bytes": 64,
+              "sb1_trainer_tower": 0x3D38, "trainer_tower_bytes": 48}
+    for name, L in (("vanilla", V), ("frlgplus", F)):
+        for key, want in expect.items():
+            check(L.get(key) == want, f"{name} {key}: want {want:#x} got {L.get(key)}")
+        for key in ("sb1_mail", "sb1_seen1", "sb1_seen2", "sb1_fame_checker",
+                    "sb1_trainer_tower"):
+            end = L[key] + L[key[len("sb1_"):] + "_bytes"]
+            check(end <= L["sb1_size"],
+                  f"{name} {key} runs to {end:#x}, past sb1 {L['sb1_size']:#x}")
+    check(F["sb1_trainer_tower"] + F["trainer_tower_bytes"] == F["sb1_size"],
+          "trainerTower is SaveBlock1's last field, so it must end at sizeof")
+
+
+def test_the_key_system_struct_size_is_generated_not_assumed_to_be_two_bytes():
+    """struct KeySystemFlags is two u16: the bitfields fill one, padding2 is the
+    other. A migration that writes only the first leaves the second inheriting
+    vanilla's bytes inside a struct FRLG+ reads."""
+    check(F.get("key_flags_bytes") == 4, f"key_flags_bytes {F.get('key_flags_bytes')}")
+    check(F["sb1_key_flags"] + F["key_flags_bytes"] == 0x638,
+          f"the Key System struct should end at trainerRematchStepCounter (0x638), "
+          f"ends at {F['sb1_key_flags'] + F['key_flags_bytes']:#x}")
+    check("key_flags_bytes" not in V, "vanilla has no Key System flags")
+    # The bit-packing unit the size comes from, independent of any checkout.
+    size = generate_tables._bitfield_struct_size(
+        "struct X\n{\n    u16 a:2;\n    u16 b:14;\n    u16 c;\n};\n", "X")
+    check(size == 4, f"two u16 storage units should be 4 bytes, got {size}")
+    size = generate_tables._bitfield_struct_size(
+        "struct Y\n{\n    u16 a:10;\n    u16 b:10;\n};\n", "Y")
+    check(size == 4, f"two bitfields that cannot share a unit should be 4 bytes, got {size}")
+
+
+def test_a_key_system_struct_that_grew_is_refused():
+    """The walk is lastViewedPokedexEntry + 2 and the size is counted off the
+    struct; trainerRematchStepCounter's annotation is what pins the pair."""
+    _plus_walk_refuses(
+        "test_a_key_system_struct_that_grew_is_refused",
+        lambda t: t.replace("    u16 padding2;\n", "    u16 padding2;\n    u16 padding3;\n", 1),
+        ["KeySystemFlags", "0x638"])
+
+
+def test_a_moved_master_trainer_title_is_refused():
+    """masterTrainerTitle is carved out of filler_062C's last byte, so the walk has
+    to land exactly on lastViewedPokedexEntry. Moving filler_062C's annotation is
+    exactly the stale-comment case: the walk follows it and the landing check is the
+    only thing that notices."""
+    _plus_walk_refuses(
+        "test_a_moved_master_trainer_title_is_refused",
+        lambda t: t.replace("/*0x062C*/ u8 filler_062C[5];",
+                            "/*0x0628*/ u8 filler_062C[5];", 1),
+        ["masterTrainerTitle", "lastViewedPokedexEntry"])
+
+
+def test_a_stale_seen2_annotation_is_refused():
+    """seen1 and seen2 are both DEX_FLAGS_NO arrays, so the distance to the field
+    after each has to equal the Pokédex's own flag-array length."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append(f"test_a_stale_seen2_annotation_is_refused (no pokefirered checkout at {VANILLA_SRC})")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        check(_walk(tmp)["seen2_bytes"] == 52, "undoctored tree should walk cleanly")
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = re.sub(r"/\*0x3A18\*/(\s*u8 seen2)", r"/*0x3A10*/\1", text, count=1)
+        check(doctored != text, "could not doctor seen2's annotation")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("seen2" in str(e) and "stale" in str(e),
+                  f"refused, but not on seen2's length: {e}")
+        else:
+            check(False, "a seen2 span that is not DEX_FLAGS_NO should be refused")
+
+
+def test_a_fame_checker_that_does_not_follow_the_rival_name_is_refused():
+    """fameChecker's own annotation is cross-checked against where rivalName ends."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append(f"test_a_fame_checker_that_does_not_follow_the_rival_name_is_refused (no pokefirered checkout at {VANILLA_SRC})")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = re.sub(r"/\*0x3A54\*/(\s*struct FameCheckerSaveData)", r"/*0x3A58*/\1",
+                          text, count=1)
+        check(doctored != text, "could not doctor fameChecker's annotation")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("fameChecker" in str(e) and "rivalName" in str(e),
+                  f"refused, but not on the rivalName check: {e}")
+        else:
+            check(False, "a fameChecker that does not follow rivalName should be refused")
 
 
 def test_zz_committed_tables_were_not_regenerated():
@@ -400,7 +561,7 @@ def main():
     for f in FAILS:
         print(f"FAIL: {f}")
     for n in SKIPPED:
-        print(f"SKIPPED (no pokefirered checkout at {VANILLA_SRC}): {n}")
+        print(f"SKIPPED: {n}")
     print(f"\n{len(FAILS)} failures")
     return 1 if FAILS else 0
 
