@@ -13,6 +13,7 @@ import rules
 LOSS_HEADINGS = {
     "tm_quantity": "TMs and HMs kept once (the TM Case stores one bit per TM)",
     "pocket_full": "Did not fit (the FRLG+ pocket is full)",
+    "key_item_quantity": "Key items kept once (Key Items stores no quantity)",
     "unmapped_key_item": "Key items with no FRLG+ key-item index",
     "unknown_item": "Not carried: FRLG+ has no such item, or no pocket for it",
 }

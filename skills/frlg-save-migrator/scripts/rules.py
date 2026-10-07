@@ -47,7 +47,7 @@ def convert_bag(src_pockets, plus_L, tables):
             if dest == "tm_case":
                 bit = tm_index.get(iid)
                 if bit is None:
-                    losses.append({"kind": "unknown_item", "item": name, "id": iid, "lost": 1,
+                    losses.append({"kind": "unknown_item", "item": name, "id": iid, "lost": qty,
                                    "detail": "routed to the TM Case but not a TM or HM "
                                              "FRLG+ knows"})
                     continue
@@ -61,16 +61,22 @@ def convert_bag(src_pockets, plus_L, tables):
             if dest == "key_items":
                 stored = index_of_item.get(iid)
                 if stored is None:
-                    losses.append({"kind": "unmapped_key_item", "item": name, "id": iid, "lost": 1,
+                    losses.append({"kind": "unmapped_key_item", "item": name, "id": iid, "lost": qty,
                                    "detail": "no FRLG+ key-item index for this item"})
                     continue
                 if key_next >= len(key_bytes):
-                    losses.append({"kind": "pocket_full", "item": name, "id": iid, "lost": 1,
+                    losses.append({"kind": "pocket_full", "item": name, "id": iid, "lost": qty,
                                    "detail": f"Key Items is full; it holds "
                                              f"{plus_L['bag_key_items_count']}"})
                     continue
                 key_bytes[key_next] = stored
                 key_next += 1
+                if qty > 1:
+                    # One index byte per key item: the pocket has no quantity.
+                    losses.append({"kind": "key_item_quantity", "item": name,
+                                   "id": iid, "lost": qty - 1,
+                                   "detail": f"had {qty}; Key Items stores one byte per "
+                                             f"item, so {qty - 1} could not carry"})
                 continue
 
             if dest not in SLOT_POCKETS:

@@ -42,7 +42,7 @@ filler, and the vanilla item slots FRLG+ no longer uses.
 TM05 becomes one. The plan lists every such loss before anything is written, and
 the verification step accounts for exactly these and nothing else.
 
-Three other things can be dropped, and each is listed in the plan too: an item that
+Key items have no quantity either: a key item held more than once is kept once (`key_item_quantity`). Three other things can be dropped, and each is listed in the plan too: an item that
 no longer fits its FRLG+ pocket (`pocket_full`), a key item FRLG+ has no index for
 (`unmapped_key_item`), and an item the tool does not recognise (`unknown_item`).
 

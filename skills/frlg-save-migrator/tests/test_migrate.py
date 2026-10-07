@@ -26,7 +26,7 @@ import savewrite  # noqa: E402
 import vanilla_frlg  # noqa: E402
 import verify  # noqa: E402
 from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
-from gen3core import u16, u32  # noqa: E402
+from gen3core import SECTOR_DATA_SIZE, u16, u32  # noqa: E402
 from verify import (item_multiset, item_multiset_frlgplus,  # noqa: E402
                     read_frlgplus_sb1, verify_conversion)
 from vanilla_read import PARTY_MON_SIZE, read_vanilla  # noqa: E402
@@ -208,13 +208,14 @@ def capacity_words(lines):
             if any(w in l.lower() for l in lines)]
 
 
-def test_the_plan_names_all_four_kinds_of_loss_distinctly():
+def test_the_plan_names_every_kind_of_loss_distinctly():
     plan = {"writes": {}, "mons": {}, "skipped": [], "decisions": [], "notes": [],
             "source_version": "fr",
             "losses": [{"kind": "tm_quantity", "item": "TM05", "detail": "had 3"},
                        {"kind": "pocket_full", "item": "Potion", "detail": "did not fit"},
                        {"kind": "unmapped_key_item", "item": "Some Key", "detail": "no index"},
-                       {"kind": "unknown_item", "item": "Odd Thing", "detail": "no pocket"}]}
+                       {"kind": "unknown_item", "item": "Odd Thing", "detail": "no pocket"},
+                       {"kind": "key_item_quantity", "item": "Bicycle", "detail": "had 2"}]}
     src = read_vanilla(fixtures.build_vanilla_save(), TV)
     text = planmod.render_plan(plan, src, TF.layout)
     for kind, heading in planmod.LOSS_HEADINGS.items():
@@ -455,7 +456,8 @@ def test_the_daycare_step_counter_discriminates_the_layouts():
          sits in FRLG+ struct padding. Without that, a vanilla read of the step
          counter on the result still sees the old value. This defends that clearing.
     """
-    pattern = bytes((i * 7) % 251 + 1 for i in range(280))
+    mons_len = TV.layout["daycare_mon_size"] * TV.layout["daycare_mon_count"]
+    pattern = bytes((i * 7) % 251 + 1 for i in range(mons_len))
     raw = fixtures.build_vanilla_save(daycare_step=137, daycare_offspring=0xBEEF,
                                       daycare_mons=pattern)
     out = _convert_to_bytes(raw)
@@ -470,11 +472,11 @@ def test_the_daycare_step_counter_discriminates_the_layouts():
     # Half 1: fields the conversion writes.
     check(u32(f_sb1, LF["sb1_daycare_offspring"]) == 0xBEEF,
           "FRLG+ layout should read the offspring personality the conversion wrote")
-    check(f_sb1[LF["sb1_daycare"]:LF["sb1_daycare"] + 280] == pattern,
+    check(f_sb1[LF["sb1_daycare"]:LF["sb1_daycare"] + mons_len] == pattern,
           "FRLG+ layout should read the Day Care Pokemon the conversion moved")
     check(u16(v_sb1, LV["sb1_daycare_offspring"]) != 0xBEEF,
           "a vanilla-layout read must NOT recover the offspring personality")
-    check(v_sb1[LV["sb1_daycare"]:LV["sb1_daycare"] + 280] != pattern,
+    check(v_sb1[LV["sb1_daycare"]:LV["sb1_daycare"] + mons_len] != pattern,
           "a vanilla-layout read must NOT recover the Day Care Pokemon")
 
     # Half 2: the padding the conversion clears.
@@ -528,8 +530,8 @@ def test_verify_flags_each_way_a_result_can_disagree():
         """Change one byte of SaveBlock1 ("sb1") or SaveBlock2 ("sb2") and re-seal
         that sector's checksum, so only the content differs and the verifier alone
         has to notice."""
-        sid = 0 if block == "sb2" else 1 + offset // 0xF80
-        in_sector = offset if block == "sb2" else offset % 0xF80
+        sid = 0 if block == "sb2" else 1 + offset // SECTOR_DATA_SIZE
+        in_sector = offset if block == "sb2" else offset % SECTOR_DATA_SIZE
         base = where[sid] * SECTOR_SIZE
         buf = bytearray(img)
         buf[base + in_sector] = value
@@ -552,6 +554,10 @@ def test_verify_flags_each_way_a_result_can_disagree():
         "step": (poke(out, "sb1", L["sb1_daycare_step_counter"], 9), "Day Care"),
         "flags": (poke(out, "sb1", L["sb1_flags"] + 5, 1), "sb1_flags"),
         "vars": (poke(out, "sb1", L["sb1_vars"] + 7, 1), "sb1_vars"),
+        # Stat index 0 is GAME_STAT_SAVED_GAME: this one trips the cross-check with the
+        # sector counter, which the byte-equality case below does not exercise.
+        "saved-game stat": (poke(out, "sb1", L["sb1_game_stats"],
+                                 sb1[L["sb1_game_stats"]] ^ 1), "GAME_STAT_SAVED_GAME"),
         "stats": (poke(out, "sb1", L["sb1_game_stats"] + 8, sb1[L["sb1_game_stats"] + 8] ^ 1),
                   "sb1_game_stats"),
         "pc_items": (poke(out, "sb1", L["sb1_pc_items"], 1), "sb1_pc_items"),
@@ -568,6 +574,36 @@ def test_verify_flags_each_way_a_result_can_disagree():
 
 def out_sb1_byte0(out):
     return read_frlgplus_sb1(out)[0]
+
+
+def test_an_unrecognised_loss_kind_is_a_problem_not_an_excuse():
+    raw = fixtures.build_vanilla_save(items=[(item("Potion"), 4)])
+    out = _convert_to_bytes(raw)
+    bogus = [{"kind": "made_up", "item": "Potion", "id": item("Potion"), "lost": 4,
+              "detail": "x"}]
+    got = _verify(raw, out, bogus)
+    check(any("unrecognised loss kind" in x for x in got), f"bogus kind not flagged: {got}")
+    # The bogus excuse is refused: Potion is intact, so the only problem is the kind.
+    check(len(got) == 1, f"only the unrecognised kind should be reported: {got}")
+    # And it is not subtracted: pretend the Potion went missing and it must still show.
+
+
+def test_a_key_item_with_quantity_two_is_reported_as_a_loss():
+    bike = next(i for i in sorted(set(TF.key_item_indices.values()))
+                if TF.item_pocket(i) == "key_items")
+    raw = fixtures.build_vanilla_save(key_items=[(bike, 2)])
+    src = read_vanilla(raw, TV)
+    p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
+    kinds = [(l["kind"], l["lost"]) for l in p["losses"]]
+    check(kinds == [("key_item_quantity", 1)], f"losses {kinds}")
+    text = planmod.render_plan(p, src, TF.layout)
+    line = next((x for x in text.splitlines() if "had 2" in x), "")
+    print("REPORT LINE:", line.strip())
+    check("could not carry" in line, f"report line: {line!r}")
+    out = _convert_to_bytes(raw)
+    check(_verify(raw, out, p["losses"]) == [], f"should verify with the loss: {_verify(raw, out, p['losses'])}")
+    check(any("not conserved" in x for x in _verify(raw, out)),
+          "without the loss it must still fail")
 
 
 def test_the_untouched_list_is_all_actually_compared():

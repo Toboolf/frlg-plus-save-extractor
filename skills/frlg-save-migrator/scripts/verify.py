@@ -47,6 +47,12 @@ def _region(L, key):
     return L[key], sizes[key]
 
 
+# Every loss kind rules.convert_bag can record. Only these may be subtracted from
+# conservation; any other kind is reported rather than silently excused.
+DOCUMENTED_LOSS_KINDS = frozenset({"tm_quantity", "key_item_quantity", "pocket_full",
+                                   "unmapped_key_item", "unknown_item"})
+
+
 def item_multiset(pockets):
     """{item id: total quantity} summed across every pocket (PLAINTEXT quantities,
     as read_vanilla returns them). A moved pocket boundary changes this even when
@@ -107,6 +113,7 @@ def item_multiset_frlgplus(raw, plus_L, tf):
 
 
 def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
+    # `tv` is reserved: unused today, kept so the signature stays as specified.
     """Every way the result disagrees with the source. Empty means it checks out.
 
     `losses` are the plan's documented losses; each carries the item id and how
@@ -139,6 +146,10 @@ def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
     expected = item_multiset(src["pockets"])
     for loss in losses:
         iid = loss.get("id")
+        if loss.get("kind") not in DOCUMENTED_LOSS_KINDS:
+            problems.append(f"unrecognised loss kind {loss.get('kind')!r} for "
+                            f"{loss.get('item')}; it is not subtracted from the item count")
+            continue
         if iid is not None:
             expected[iid] = expected.get(iid, 0) - loss.get("lost", 0)
     expected = {i: q for i, q in expected.items() if q}
