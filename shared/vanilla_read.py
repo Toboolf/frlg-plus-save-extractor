@@ -21,6 +21,41 @@ BOX_MON_SIZE = 80
 MAX_PARTY = 6
 
 
+def daycare_mon_slots(L):
+    """The Day Care's `struct BoxPokemon`s: (identity, label, SaveBlock1 offset).
+
+    `struct DaycareMon` puts `struct BoxPokemon mon` at offset 0, so each stored
+    Pokémon is an 80-byte box form at a generated offset: the Route 5 Day Care's one
+    mon, then the Four Island Day Care's `daycare_mon_count`. Everything after those
+    80 bytes (the mail and the step count) belongs to the Day Care, not the Pokémon.
+    """
+    slots = [("route_5", "Route 5 Day Care", L["sb1_route5_daycare_mon"])]
+    for k in range(L["daycare_mon_count"]):
+        slots.append((f"four_island_{k + 1}", f"Four Island Day Care slot {k + 1}",
+                      L["sb1_daycare"] + L["daycare_mon_size"] * k))
+    return slots
+
+
+def box_mon_slots(L):
+    """Every `struct BoxPokemon` a FireRed/LeafGreen save can hold, as
+    (identity, label, block, offset within that block).
+
+    429 of them: MAX_PARTY party slots (whose first 80 bytes are the box form),
+    `total_boxes` x `in_box_count` PC slots, and the three Day Care slots. The list
+    is derived from the generated layout so that "every Pokémon in the save" is a
+    property of the table rather than a sentence in a comment — a count that changed
+    or a region that moved shows up here instead of leaving Pokémon unconverted.
+    """
+    slots = [(f"party_{i + 1}", f"party {i + 1}", "sb1",
+              L["sb1_party"] + PARTY_MON_SIZE * i) for i in range(MAX_PARTY)]
+    for bx in range(L["total_boxes"]):
+        for sl in range(L["in_box_count"]):
+            slots.append((f"box_{bx + 1}_{sl + 1}", f"box {bx + 1} slot {sl + 1}", "pc",
+                          L["pc_boxes"] + (bx * L["in_box_count"] + sl) * BOX_MON_SIZE))
+    slots += [(ident, label, "sb1", off) for ident, label, off in daycare_mon_slots(L)]
+    return slots
+
+
 def read_vanilla(raw, tables):
     """Parse the active slot. Returns the dict described in the migrator's plan.
 
@@ -30,6 +65,9 @@ def read_vanilla(raw, tables):
     empty (an all-zero first 80 bytes). Nothing is compacted, so a writer that does
     `sb1[sb1_party + 100*i]` over either list lands on the right slot. `boxes`/`boxes_raw`
     work the same way: 14 x 30, None for an empty slot, raw bytes always kept.
+    `day_care` is the remaining three slots (box_mon_slots explains why 429, not 426):
+    one dict per `struct DaycareMon`, carrying its identity, label, SaveBlock1 offset,
+    raw 80 bytes and decoded Pokémon (None when the slot is empty).
 
     Refuses (ValueError) when any of the 14 sections is missing from the chosen slot: the
     encryption key lives in section 0 and the money, bag and party in 1-4, so zero-filling
@@ -84,6 +122,18 @@ def read_vanilla(raw, tables):
         boxes.append(slots)
         boxes_raw.append(raws)
 
+    # The three Day Care Pokémon. Indexed by IDENTITY rather than position, because
+    # the two Day Cares are two separate regions; `offset` is where the 80-byte box
+    # form lives in SaveBlock1, which is the same in both layouts for Route 5 and
+    # four bytes later in FRLG+ for Four Island.
+    day_care = []
+    for ident, label, off in daycare_mon_slots(L):
+        chunk = sb1[off:off + BOX_MON_SIZE]
+        day_care.append({"id": ident, "where": label, "offset": off,
+                         "raw": bytes(chunk),
+                         "mon": decode_pokemon(chunk, tables, player, where=label,
+                                               profile=vanilla_frlg)})
+
     pockets = {}
     for name in VANILLA_POCKETS:
         off, cnt = L[f"sb1_bag_{name}"], L[f"bag_{name}_count"]
@@ -104,5 +154,5 @@ def read_vanilla(raw, tables):
             "money": u32(sb1, L["sb1_money"]) ^ key,
             "coins": u16(sb1, L["sb1_coins"]) ^ key16,
             "saved_game_stat": u32(sb1, L["sb1_game_stats"] + 4 * stat_idx) ^ key,
-            "party_raw": party_raw, "boxes_raw": boxes_raw,
+            "party_raw": party_raw, "boxes_raw": boxes_raw, "day_care": day_care,
             "remaps": vanilla_frlg.remaps(tables.data_dir)}

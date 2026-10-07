@@ -55,7 +55,7 @@ this one produces a converted save. It is built so that nothing is written by ac
 
 `references/what-carries.md` is the field-by-field account: what is copied byte for byte
 (flags, variables, game stats, the Pokédex, play time, money, coins, PC items), what is
-converted (the bag, the Day Care, every Pokémon's boxed HP/status halfword, map IDs), what is
+converted (the bag, the Day Care, all 429 Pokémon's boxed HP/status halfword, map IDs), what is
 initialised, and what is lost. The main loss is quantity: TMs are one bit each, so duplicate
 TMs collapse to one, and key items are one byte each, so duplicates collapse too. Items that no
 longer fit their FRLG+ pocket, key items FRLG+ has no index for, and unrecognised items are

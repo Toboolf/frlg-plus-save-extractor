@@ -119,15 +119,30 @@ def encrypt_quantities(writes, plus_L, key16):
 
 
 # ---------------------------------------------------------------- rule 2: daycare
-def convert_daycare(src_sb1, vanilla_L, plus_L):
-    """Re-pack the Day Care. The two stored Pokemon are byte-identical structures;
-    only offspringPersonality widens from u16 to u32, which is what moved the
-    whole struct 4 bytes earlier in FRLG+."""
-    span = vanilla_L["daycare_mon_size"] * vanilla_L["daycare_mon_count"]
-    mons = src_sb1[vanilla_L["sb1_daycare"]:vanilla_L["sb1_daycare"] + span]
+def convert_daycare(src_sb1, vanilla_L, plus_L, converted_mons):
+    """Re-pack the Four Island Day Care. The DaycareMon structures are byte-identical
+    between the games; only offspringPersonality widens from u16 to u32, which is
+    what moved the whole struct 4 bytes earlier in FRLG+.
+
+    `converted_mons` is one entry per Four Island slot, in slot order, each either the
+    converted 80-byte box form from convert_mons or None for a slot that must keep the
+    source's bytes (empty, an egg, or a Pokemon whose checksum did not verify). They
+    are spliced into the copied block rather than written separately, so the Day Care
+    produces exactly ONE span in the write set and nothing double-writes those bytes.
+    """
+    stride, count = vanilla_L["daycare_mon_size"], vanilla_L["daycare_mon_count"]
+    if len(converted_mons) != count:
+        raise ValueError(f"the Four Island Day Care has {count} slots but "
+                         f"{len(converted_mons)} converted Pokemon were supplied")
+    mons = bytearray(src_sb1[vanilla_L["sb1_daycare"]:
+                             vanilla_L["sb1_daycare"] + stride * count])
+    for k, mon80 in enumerate(converted_mons):
+        if mon80 is None:
+            continue
+        mons[stride * k:stride * k + len(mon80)] = mon80
     offspring = u16(src_sb1, vanilla_L["sb1_daycare_offspring"])
     step = src_sb1[vanilla_L["sb1_daycare_step_counter"]]
-    return {"sb1_daycare": mons,
+    return {"sb1_daycare": bytes(mons),
             "sb1_daycare_offspring": struct.pack("<I", offspring),
             "sb1_daycare_step_counter": bytes([step])}
 
@@ -143,10 +158,13 @@ DEOXYS_FORME_BY_VERSION = {"fr": 1, "lg": 2}      # Attack in FireRed, Defense i
 def convert_mons(src, plus_L, tables, *, source_version):
     """Write boxHP/boxStatus/forme and remap metLocation, one decrypt per Pokemon.
 
-    Returns (out, skipped, decisions). `out["party"]` and `out["boxes"]` mirror the
-    source's shape, with None for an empty slot and the ORIGINAL bytes for any slot
-    that was skipped, so a writer can index either by PHYSICAL slot. Nothing is ever
-    compacted: shifting a party slot would hand the game a different party.
+    EVERY Pokemon in the save, which is 429 and not 426: `out["party"]` and
+    `out["boxes"]` mirror the source's shape, and `out["day_care"]` carries the three
+    struct BoxPokemon the two Day Cares hold, keyed by the identity
+    vanilla_read.box_mon_slots gives them. None marks an empty slot and the ORIGINAL
+    bytes any slot that was skipped, so a writer can index all of them by PHYSICAL
+    slot. Nothing is ever compacted: shifting a party slot would hand the game a
+    different party, and a Day Care slot is addressed by its own offset.
     """
     if source_version not in DEOXYS_FORME_BY_VERSION:
         raise ValueError(f"source_version must be 'fr' or 'lg', got {source_version!r}")
@@ -188,7 +206,14 @@ def convert_mons(src, plus_L, tables, *, source_version):
     party = [one(m, src["party_raw"][i]) for i, m in enumerate(src["party"])]
     boxes = [[one(m, src["boxes_raw"][bx][sl]) for sl, m in enumerate(row)]
              for bx, row in enumerate(src["boxes"])]
-    return {"party": party, "boxes": boxes}, skipped, decisions
+    # The remaining three: the Route 5 Day Care's one Pokemon and the Four Island Day
+    # Care's two, each a struct BoxPokemon at offset 0 of a struct DaycareMon. Keyed
+    # by the identity vanilla_read.box_mon_slots gives them, so the writer places each
+    # back by generated offset rather than by position in a list.
+    day_care = {entry["id"]: one(entry["mon"], entry["raw"])
+                for entry in src["day_care"]}
+    return ({"party": party, "boxes": boxes, "day_care": day_care},
+            skipped, decisions)
 
 
 # ------------------------------------------------------- rule 4 (SaveBlock1 fields)

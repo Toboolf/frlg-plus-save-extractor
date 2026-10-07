@@ -17,16 +17,16 @@ copied byte for byte.
 | Money and coins | Stored XOR the encryption key; the key is unchanged, so the bytes are too. |
 | PC item storage | 30 slots, quantity stored raw in both games. |
 | Mail, the Fame Checker, the Trainer Tower | None of the three is a field in the generated layout, so no conversion rule can address those offsets; they stay as copied. (This is by construction, not the result of a byte-level comparison.) |
-| Everything about each Pokémon except its padding halfword | See below. |
+| Everything about each Pokémon except its padding halfword and its met location | See below. |
 
 ## Converted
 
 | Field | What happens |
 | --- | --- |
 | The bag | Re-sorted into FRLG+'s pockets: Items, Medicine, Held Items, Poké Balls, Berry Pouch. TMs and HMs become one bit each in the TM Case. Key items become one-byte indices. Quantities are re-encrypted with the save's key. |
-| The Day Care | The offspring personality widens from 16 to 32 bits, which moves the struct four bytes earlier. The step counter is rewritten at its new offset and the old byte, now padding, is cleared. |
-| Every Pokémon's padding halfword | FRLG+ stores boxed HP, boxed status and the Deoxys forme there. The tool computes them from the Pokémon's own stats. |
-| Map group/number, map layout ID, map section IDs | Remapped through generated tables for every stored warp, the saved location, and every quest-log scene. |
+| The Day Care | The offspring personality widens from 16 to 32 bits, which moves the struct four bytes earlier. The step counter is rewritten at its new offset and the old byte, now padding, is cleared. The Pokémon stored in each Day Care are converted like any other (next row): FRLG+ reads their boxed HP back when they are withdrawn. |
+| Every Pokémon's padding halfword | FRLG+ stores boxed HP, boxed status and the Deoxys forme there. The tool computes them from the Pokémon's own stats. "Every" means all 429 slots a save holds: 6 party, 420 PC, the Route 5 Day Care's one and the Four Island Day Care's two. |
+| Map group/number, map layout ID, map section IDs | Remapped through generated tables for every stored warp, the saved location, every quest-log scene, and each of the 429 Pokémon's met location. |
 | The Key System flags | Set to the standard rules with the source game (FireRed or LeafGreen) recorded. |
 
 ## Initialised

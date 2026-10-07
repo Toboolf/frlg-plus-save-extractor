@@ -29,7 +29,9 @@ from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
 from gen3core import SECTOR_DATA_SIZE, u16, u32  # noqa: E402
 from verify import (item_multiset, item_multiset_frlgplus,  # noqa: E402
                     read_frlgplus_sb1, verify_conversion)
-from vanilla_read import PARTY_MON_SIZE, read_vanilla  # noqa: E402
+import gen3core  # noqa: E402
+from vanilla_read import (MAX_PARTY, PARTY_MON_SIZE, box_mon_slots,  # noqa: E402
+                          daycare_mon_slots, read_vanilla)
 
 TV = Tables(layout=vanilla_frlg.LAYOUT)
 TF = Tables(layout=frlgplus.LAYOUT)
@@ -493,6 +495,99 @@ def test_the_daycare_step_counter_discriminates_the_layouts():
     check(src_sb1[LV["sb1_daycare_step_counter"]] == 137
           and src_sb1[LF["sb1_daycare_step_counter"]] == 0,
           "the source should read 137 under vanilla and 0 under FRLG+")
+
+
+def _day_care_fixture():
+    """A vanilla save with BOTH Day Cares occupied: two at Four Island, one on Route 5."""
+    V = TV.layout
+    stride = V["daycare_mon_size"]
+    four = bytearray(stride * V["daycare_mon_count"])
+    four[0:80] = fixtures.mon("Pikachu", 25, pid=0x0A0B0C0D, party=False)
+    four[stride:stride + 80] = fixtures.mon("Gyarados", 40, pid=0x1A2B3C4D, party=False)
+    return fixtures.build_vanilla_save(
+        party=[fixtures.mon("Bulbasaur", 5)],
+        daycare_step=137, daycare_offspring=0xBEEF, daycare_mons=bytes(four),
+        route5_daycare_mon=fixtures.mon("Abra", 16, pid=0x5E6F7A8B, party=False))
+
+
+def test_a_pokemon_in_either_day_care_gets_its_box_hp_written():
+    """A FireRed save holds 429 struct BoxPokemon, not 426: three of them sit at
+    offset 0 of a struct DaycareMon.
+
+    FRLG+ treats that halfword as live in both directions for a Day Care Pokemon:
+    StorePokemonInDaycare calls StoreHPAndStatusInBoxMon (src/daycare.c:442) and
+    TakeSelectedPokemonFromDaycare calls PopulateBoxHpAndStatusToPartyMon
+    (src/daycare.c:522), which with keyFlags.nuzlocke == 1 branches on currentHP == 0.
+    A Day Care Pokemon converted with boxHP 0 therefore withdraws dead, which under
+    Nuzlocke is unrecoverable. This is the exact failure rule 3 exists to prevent.
+    """
+    r, got = convert(_day_care_fixture())
+    check(got is not None, f"the conversion failed: {r.stderr}")
+    if got is None:
+        return
+    dc = got["day_care"]
+    check(dc["four_island"]["count"] == 2 and dc["route_5"]["count"] == 1,
+          f"both Day Cares should still be occupied: {dc['four_island']['count']} "
+          f"and {dc['route_5']['count']}")
+    mons = dc["four_island"]["pokemon"] + dc["route_5"]["pokemon"]
+    check(len(mons) == 3, f"expected 3 Day Care Pokemon, got {len(mons)}")
+    for m in mons:
+        check(m["checks"]["checksum"] == "ok",
+              f"{m['where']}: checksum {m['checks']['checksum']} after conversion")
+        check(m.get("box_hp_recorded") is True,
+              f"{m['where']}: no boxed HP was recorded")
+        check(m.get("hp_current") == m["stats"]["HP"],
+              f"{m['where']}: recorded HP {m.get('hp_current')} is not its max "
+              f"HP {m['stats']['HP']}")
+
+
+def test_the_day_care_pokemon_get_their_met_location_remapped():
+    """Rule 4 applies to all 429, not only the 426 in the party and the boxes."""
+    raw = _day_care_fixture()
+    src = read_vanilla(raw, TV)
+    out = _convert_to_bytes(raw)
+    f_sb1 = read_frlgplus_sb1(out)
+    remap = src["remaps"]["mapsec"]
+    # The Four Island Day Care sits four bytes earlier in FRLG+, so the result is read
+    # through the FRLG+ layout's own slot offsets, matched to the source by identity.
+    plus_off = {ident: off for ident, _label, off in daycare_mon_slots(TF.layout)}
+    for entry in src["day_care"]:
+        was = entry["mon"]["origin"]["met_location_id"]
+        want = remap.get(was, was)
+        off = plus_off[entry["id"]]
+        after = gen3core.decrypt_substructures(f_sb1[off:off + 80])[0]["M"][1]
+        check(after == want,
+              f"{entry['where']}: metLocation {was} should remap to {want}, got {after}")
+
+
+def test_the_plan_mentions_a_pokemon_in_the_day_care():
+    raw = _day_care_fixture()
+    src = read_vanilla(raw, TV)
+    p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
+    text = planmod.render_plan(p, src, TF.layout)
+    check("3 in the Day Care" in text,
+          "the plan should say how many Pokemon are in the Day Care")
+    check("all 4 get boxHP written" in text,
+          "the boxHP claim should count the Day Care Pokemon too")
+    for label in ("Route 5 Day Care", "Four Island Day Care slot 1",
+                  "Four Island Day Care slot 2"):
+        check(label in text, f"the plan never names the Pokemon in the {label}")
+
+
+def test_every_box_pokemon_slot_a_save_can_hold_is_in_the_inventory():
+    """429 = 6 party + 14x30 boxes + 1 Route 5 + DAYCARE_MON_COUNT at Four Island.
+
+    The number is derived from the generated layout, so a slot that moved or a
+    count that changed fails here rather than being quietly left unconverted.
+    """
+    V = TV.layout
+    slots = box_mon_slots(V)
+    expected = (MAX_PARTY + V["total_boxes"] * V["in_box_count"]
+                + 1 + V["daycare_mon_count"])
+    check(len(slots) == expected, f"{len(slots)} slots, expected {expected}")
+    check(len(slots) == 429, f"a FireRed save holds 429 BoxPokemon, not {len(slots)}")
+    check(len({(blk, off) for _i, _l, blk, off in slots}) == len(slots),
+          "two slots share an offset")
 
 
 def _verify(raw, out, losses=()):

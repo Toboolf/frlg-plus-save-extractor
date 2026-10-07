@@ -342,7 +342,7 @@ def test_the_daycare_moves_four_bytes_and_its_offspring_field_widens():
     reason the struct sits at 0x2F7C instead of the 0x2F80 the comment claims."""
     raw = fixtures.build_vanilla_save(daycare_step=137)
     v = read_vanilla(raw, TV)
-    writes = convert_daycare(v["sb1"], V, F)
+    writes = convert_daycare(v["sb1"], V, F, [None] * V["daycare_mon_count"])
     check(V["sb1_daycare"] == 0x2F80 and F["sb1_daycare"] == 0x2F7C,
           f"vanilla {V['sb1_daycare']:#x}, FRLG+ {F['sb1_daycare']:#x}")
     check(V["daycare_offspring_width"] == 2 and F["daycare_offspring_width"] == 4,
@@ -358,22 +358,83 @@ def test_the_daycare_moves_four_bytes_and_its_offspring_field_widens():
 
 
 def test_the_daycare_carries_both_stored_pokemon_and_the_widened_offspring():
-    """The two DaycareMon structures are byte-identical between the games, so they
-    must come across verbatim; only offspringPersonality is re-packed wider."""
+    """Everything in a DaycareMon except the stored Pokemon is byte-identical between
+    the games and must come across verbatim: the mail and the step count behind each
+    mon, and offspringPersonality only re-packed wider.
+
+    The Pokemon themselves are NOT verbatim — they are the converted bytes
+    convert_mons produced, spliced in. With None (nothing converted) the source's
+    bytes stay, which is what an empty or skipped slot gets.
+    """
     boxed = fixtures.mon("Bulbasaur", 5, party=False)
     sb1 = bytearray(V["sb1_size"])
     span = V["daycare_mon_size"]
     sb1[V["sb1_daycare"]:V["sb1_daycare"] + 80] = boxed
     sb1[V["sb1_daycare"] + span:V["sb1_daycare"] + span + 80] = boxed
+    # Mail and the step count sit behind each 80-byte Pokemon and belong to the Day
+    # Care; a splice that overran 80 bytes would lose them.
+    tail = bytes((i * 11) % 251 + 1 for i in range(span - 80))
+    sb1[V["sb1_daycare"] + 80:V["sb1_daycare"] + span] = tail
+    sb1[V["sb1_daycare"] + span + 80:V["sb1_daycare"] + 2 * span] = tail
     struct.pack_into("<H", sb1, V["sb1_daycare_offspring"], 0xABCD)
     sb1[V["sb1_daycare_step_counter"]] = 42
-    writes = convert_daycare(bytes(sb1), V, F)
+    writes = convert_daycare(bytes(sb1), V, F, [None, None])
     mons = writes["sb1_daycare"]
-    check(mons[:80] == boxed, "the first stored Pokemon did not carry verbatim")
+    check(mons[:80] == boxed, "a slot with nothing converted did not keep its bytes")
     check(mons[span:span + 80] == boxed, "the second stored Pokemon did not carry")
+    check(mons[80:span] == tail and mons[span + 80:2 * span] == tail,
+          "the mail and step count behind each stored Pokemon did not carry")
     check(writes["sb1_daycare_offspring"] == struct.pack("<I", 0xABCD),
           f"offspring should widen to u32: {writes['sb1_daycare_offspring']!r}")
     check(writes["sb1_daycare_step_counter"] == bytes([42]), "the step counter changed")
+
+    # And the converted bytes really are what lands there.
+    other = frlgplus.write_box_padding(boxed, box_hp=123)
+    spliced = convert_daycare(bytes(sb1), V, F, [other, None])["sb1_daycare"]
+    check(spliced[:80] == other, "the converted Pokemon was not spliced in")
+    check(spliced[80:span] == tail, "splicing the Pokemon overran into its mail")
+    check(spliced[span:span + 80] == boxed, "slot 2 should be untouched")
+    try:
+        convert_daycare(bytes(sb1), V, F, [other])
+        check(False, "a wrong number of converted Pokemon should be refused")
+    except ValueError:
+        pass
+
+
+def test_every_pokemon_in_the_save_is_converted_including_the_day_care():
+    """429, not 426. The three extra are a struct BoxPokemon at offset 0 of each
+    struct DaycareMon, and FRLG+ reads their boxHP back on withdrawal."""
+    stride = V["daycare_mon_size"]
+    four = bytearray(stride * V["daycare_mon_count"])
+    four[0:80] = fixtures.mon("Pikachu", 25, pid=0x0A0B0C0D, party=False)
+    four[stride:stride + 80] = fixtures.mon("Gyarados", 40, pid=0x1A2B3C4D, party=False)
+    raw = fixtures.build_vanilla_save(
+        daycare_mons=bytes(four),
+        route5_daycare_mon=fixtures.mon("Abra", 16, pid=0x5E6F7A8B, party=False))
+    v = read_vanilla(raw, TV)
+    out, skipped, _ = convert_mons(v, F, TF, source_version="fr")
+    check(skipped == [], f"nothing should be skipped here: {skipped}")
+    check(set(out["day_care"]) == {"route_5", "four_island_1", "four_island_2"},
+          f"the converted Day Care slots are {sorted(out['day_care'])}")
+    for ident, mon80 in out["day_care"].items():
+        check(mon80 is not None, f"{ident} was not converted")
+        if mon80 is None:
+            continue
+        check(g_padding(mon80)["box_hp"] > 0, f"{ident}: boxHP is still 0")
+
+
+def test_an_empty_day_care_slot_is_left_alone():
+    """An empty slot gets no padding halfword: there is no Pokemon to give an HP to,
+    and a nonzero halfword in empty space is exactly the stale data rule 6 removes.
+    A zero-PID slot must also never reach rewrite_substructures, which would refuse
+    it for a bad checksum."""
+    v = read_vanilla(fixtures.build_vanilla_save(), TV)
+    check(all(e["mon"] is None for e in v["day_care"]),
+          "an untouched fixture should have both Day Cares empty")
+    out, skipped, _ = convert_mons(v, F, TF, source_version="fr")
+    check(all(m is None for m in out["day_care"].values()),
+          f"empty slots should convert to nothing: {out['day_care']}")
+    check(skipped == [], f"an empty slot is not a skip: {skipped}")
 
 
 def test_every_occupied_slot_gets_its_box_hp_written():

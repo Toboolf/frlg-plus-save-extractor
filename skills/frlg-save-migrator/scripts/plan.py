@@ -23,13 +23,23 @@ def build_plan(src, vanilla_L, plus_L, tables, *, source_version):
     bag_writes, losses = rules.convert_bag(src["pockets"], plus_L, tables)
     # convert_bag works in plaintext; the game stores each quantity XOR'd with the key.
     writes = rules.encrypt_quantities(bag_writes, plus_L, src["key"] & 0xFFFF)
-    writes.update(rules.convert_daycare(src["sb1"], vanilla_L, plus_L))
+    # The Pokemon come first: the Four Island Day Care's block carries two of them, so
+    # the Day Care write has to be built out of their CONVERTED bytes rather than the
+    # source's. Splicing them in there also keeps the Day Care to one write span.
+    mons, skipped, decisions = rules.convert_mons(
+        src, plus_L, tables, source_version=source_version)
+    four_island = [mons["day_care"][f"four_island_{k + 1}"]
+                   for k in range(vanilla_L["daycare_mon_count"])]
+    writes.update(rules.convert_daycare(src["sb1"], vanilla_L, plus_L, four_island))
+    # Route 5's lone Day Care Pokemon is its own span (the same offset in both
+    # layouts). An empty slot contributes no write at all: there is nothing there to
+    # give a boxHP to, and a padding halfword in an empty slot would be stale data.
+    if mons["day_care"]["route_5"] is not None:
+        writes["sb1_route5_daycare_mon"] = mons["day_care"]["route_5"]
     id_writes, notes = rules.remap_ids(src["sb1"], vanilla_L, plus_L, src["remaps"])
     writes.update(id_writes)
     writes["sb1_key_flags"] = rules.build_key_flags(source_version).to_bytes(2, "little")
     writes.update(rules.zeroed_regions(plus_L))
-    mons, skipped, decisions = rules.convert_mons(
-        src, plus_L, tables, source_version=source_version)
     return {"writes": writes, "mons": mons, "losses": losses, "skipped": skipped,
             "decisions": decisions, "notes": notes,
             "source_version": source_version}
@@ -48,8 +58,15 @@ def render_plan(plan, src, plus_L):
     L.append("")
     party = len([m for m in src["party"] if m])
     boxed = sum(1 for row in src["boxes"] for m in row if m)
-    L.append(f"Pokémon: {party} in the party, {boxed} in the boxes — every one gets "
-             f"boxHP written, so none withdraws fainted under Nuzlocke or No Free Heals")
+    stored = [e for e in src["day_care"] if e["mon"]]
+    written = party + boxed + len(stored)
+    L.append(f"Pokémon: {party} in the party, {boxed} in the boxes, {len(stored)} in "
+             f"the Day Care — all {written} get boxHP written, so none withdraws "
+             f"fainted under Nuzlocke or No Free Heals")
+    if stored:
+        L.append("  Day Care: " + "; ".join(
+            f"{e['where']} — {e['mon'].get('nickname') or e['mon']['species']}"
+            for e in stored))
     items = sum(len(p) for p in src["pockets"].values())
     L.append(f"Bag: {items} items re-pocketed into FRLG+'s pockets")
     L.append("")
