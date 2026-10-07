@@ -27,6 +27,8 @@ sb1_escape_warp|36|0x24
 sb1_quest_log|4864|0x1300
 quest_log_scene_count|4|0x4
 quest_log_scene_size|1640|0x668
+quest_log_scene_flags|328|0x148
+quest_log_scene_vars|616|0x268
 sb1_last_heal_location|28|0x1C
 sb1_party_count|52|0x34
 sb1_party|56|0x38

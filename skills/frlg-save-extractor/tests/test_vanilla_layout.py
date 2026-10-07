@@ -321,6 +321,82 @@ def test_quest_log_stride_is_checked_against_the_scene_struct():
             check(False, "a stride that disagrees with QuestLogScene.end should be refused")
 
 
+def test_the_quest_log_snapshot_offsets_are_walked_not_read_off_a_stale_comment():
+    """Each recorded scene snapshots the whole flag array and the whole var array,
+    and the migrator has to show both carried unchanged through a region it rewrites
+    wholesale. `vars`' own /*0x02c8*/ annotation is STALE in both trees: it is where
+    vars would start if flags were 0x180 bytes, and NUM_FLAG_BYTES is 0x120. So the
+    generated offset must be the walk (flags + NUM_FLAG_BYTES = 0x268), not 0x2C8.
+    """
+    for prof, name in ((vanilla_frlg, "vanilla"), (frlgplus, "FRLG+")):
+        L = Tables(layout=prof.LAYOUT).layout
+        check(L["quest_log_scene_flags"] == 0x148,
+              f"{name}: flags at {L['quest_log_scene_flags']:#x}, expected 0x148")
+        check(L["quest_log_scene_vars"] == 0x268,
+              f"{name}: vars at {L['quest_log_scene_vars']:#x}; 0x2C8 is the stale "
+              f"annotation, 0x268 is the walk")
+        check(L["quest_log_scene_vars"]
+              == L["quest_log_scene_flags"] + L["num_flag_bytes"],
+              f"{name}: vars should sit right after NUM_FLAG_BYTES of flags")
+        check(L["quest_log_scene_vars"] + 2 * L["vars_count"]
+              <= L["quest_log_scene_size"],
+              f"{name}: the snapshots do not fit inside a scene")
+
+
+def test_a_quest_log_snapshot_walk_that_misses_the_templates_is_refused():
+    """The walk past both snapshots has to land exactly on the ANNOTATED
+    objectEventTemplates, which is what pins the start and both array lengths."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_a_quest_log_snapshot_walk_that_misses_the_templates_is_refused "
+                       f"(no pokefirered checkout at {VANILLA_SRC})")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        check(_walk(tmp)["quest_log_scene_vars"] == 0x268,
+              "undoctored tree should walk the snapshots cleanly")
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = re.sub(r"/\*0x0148\*/(\s*u8\s+flags\[NUM_FLAG_BYTES\])",
+                          r"/*0x0144*/\1", text, count=1)
+        check(doctored != text, "could not doctor QuestLogScene.flags")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("objectEventTemplates" in str(e) and "0x468" in str(e),
+                  f"refused, but not on the templates landing: {e}")
+        else:
+            check(False, "a snapshot walk that misses objectEventTemplates "
+                         "should be refused")
+
+
+def test_a_quest_log_scene_with_no_annotated_flags_is_refused():
+    """The offset has to come from an annotation, not from a guess."""
+    if not os.path.isfile(os.path.join(VANILLA_SRC, "include/global.h")):
+        SKIPPED.append("test_a_quest_log_scene_with_no_annotated_flags_is_refused "
+                       f"(no pokefirered checkout at {VANILLA_SRC})")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _copy_vanilla_tree(tmp)
+        path = os.path.join(tmp, "include/global.h")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        doctored = text.replace("/*0x0148*/ u8 flags[NUM_FLAG_BYTES];",
+                                "u8 flags[NUM_FLAG_BYTES];", 1)
+        check(doctored != text, "could not strip QuestLogScene.flags' annotation")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doctored)
+        try:
+            _walk(tmp)
+        except SystemExit as e:
+            check("flags" in str(e) and "QuestLogScene" in str(e),
+                  f"refused, but not on the missing annotation: {e}")
+        else:
+            check(False, "a QuestLogScene with no annotated flags should be refused")
+
+
 def test_skill_option_writes_into_the_named_package_only():
     """--skill sends the tables to another package and leaves the extractor's alone.
 

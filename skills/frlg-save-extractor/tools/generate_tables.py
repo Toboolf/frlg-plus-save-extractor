@@ -604,6 +604,41 @@ def compute_layout(repo, consts, game="frlgplus"):
         raise SystemExit(
             f"quest log scene stride is {layout['quest_log_scene_size']:#x} from the SaveBlock1 span "
             f"but struct QuestLogScene is annotated {int(m.group(1), 16):#x} long")
+
+    # Each recorded scene snapshots the whole flag array and the whole var array.
+    # SaveBlock1 does not name them - they are fields of struct QuestLogScene - and a
+    # migration has to show they carried unchanged through a region it rewrites
+    # wholesale, so emit their offsets WITHIN a scene.
+    #
+    # `flags` carries a live annotation. `vars`' own /*0x02c8*/ comment is STALE by
+    # construction: it is where vars would start if flags were 0x180 bytes, and
+    # NUM_FLAG_BYTES is 0x120 in both trees. So walk vars off flags and NUM_FLAG_BYTES
+    # and require the walk past vars to land exactly on the ANNOTATED
+    # objectEventTemplates, which pins the start and both array lengths at once.
+    def scene_annotated(field):
+        hit = re.search(r"/\*(0x[0-9A-Fa-f]+)\*/\s*(?:u8|u16|struct\s+\w+)\s+"
+                        + field + r"\b", qs)
+        if not hit:
+            raise SystemExit(f"struct QuestLogScene has no annotated `{field}` to walk from")
+        return int(hit.group(1), 16)
+
+    scene_flags = scene_annotated("flags")
+    scene_vars = scene_flags + consts["FLAGS_COUNT"] // 8
+    after_scene_vars = scene_vars + 2 * consts["VARS_COUNT"]
+    scene_templates = scene_annotated("objectEventTemplates")
+    if after_scene_vars != scene_templates:
+        raise SystemExit(
+            f"the quest log scene's snapshots walk from flags at 0x{scene_flags:X} "
+            f"through {consts['FLAGS_COUNT'] // 8} flag bytes and "
+            f"{consts['VARS_COUNT']} vars to 0x{after_scene_vars:X}, but "
+            f"struct QuestLogScene.objectEventTemplates is annotated at "
+            f"0x{scene_templates:X} - one of those three has changed.")
+    if after_scene_vars > layout["quest_log_scene_size"]:
+        raise SystemExit(
+            f"the quest log scene's snapshots end at 0x{after_scene_vars:X}, past the "
+            f"0x{layout['quest_log_scene_size']:X}-byte scene they are inside")
+    layout["quest_log_scene_flags"] = scene_flags
+    layout["quest_log_scene_vars"] = scene_vars
     layout["sb1_last_heal_location"] = annotated("lastHealLocation")
     layout["sb1_party_count"] = annotated("playerPartyCount")
     layout["sb1_party"] = annotated("playerParty")

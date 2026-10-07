@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-07 07:21 UTC",
+ "generated_at": "2026-10-07 11:42 UTC",
  "repo_name": "FRLG-Plus",
  "repo_commit": "f198fb944",
  "rows": {
@@ -16,7 +16,7 @@
   "extended_dex": 246,
   "encounters": 2053,
   "key_item_indices": 59,
-  "save_layout": 102
+  "save_layout": 104
  },
  "save_layout": {
   "sb1_money": "0x290",
@@ -49,6 +49,8 @@
   "sb1_quest_log": "0x1300",
   "quest_log_scene_count": "0x4",
   "quest_log_scene_size": "0x668",
+  "quest_log_scene_flags": "0x148",
+  "quest_log_scene_vars": "0x268",
   "sb1_last_heal_location": "0x1C",
   "sb1_party_count": "0x34",
   "sb1_party": "0x38",

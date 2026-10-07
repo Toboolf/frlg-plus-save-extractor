@@ -816,12 +816,15 @@ def test_verify_flags_each_way_a_result_can_disagree():
                              "sb1_fame_checker"),
         "the Trainer Tower": (poke(out, "sb1", L["sb1_trainer_tower"] + 5, 1),
                               "sb1_trainer_tower"),
-        # Inside quest-log scene 0's flag snapshot, which lives in a region remap_ids
-        # rewrites wholesale.
+        # Inside quest-log scene 0's flag and var snapshots, which live in a region
+        # remap_ids rewrites wholesale. Both offsets are generated: `vars`' own
+        # /*0x02c8*/ annotation is stale (0x268 is where NUM_FLAG_BYTES puts it).
         "a quest-log flag snapshot": (
-            poke(out, "sb1", L["sb1_quest_log"] + 0x148, 1), "quest log"),
+            poke(out, "sb1", L["sb1_quest_log"] + L["quest_log_scene_flags"], 1),
+            "quest log"),
         "a quest-log var snapshot": (
-            poke(out, "sb1", L["sb1_quest_log"] + 0x2C8, 1), "quest log"),
+            poke(out, "sb1", L["sb1_quest_log"] + L["quest_log_scene_vars"], 1),
+            "quest log"),
     }
     for name, (img, needle) in cases.items():
         got = problems_for(img)
@@ -1023,8 +1026,17 @@ def test_the_quest_log_region_is_compared_with_only_the_remapped_bytes_masked():
     check((f_sb1[base + 1], f_sb1[base + 2]) == (1, 75),
           f"scene 0's map should have been remapped: "
           f"{(f_sb1[base + 1], f_sb1[base + 2])}")
-    check(f_sb1[base + 3:base + 0x668] == src["sb1"][base + 3:base + 0x668],
+    stride = TF.layout["quest_log_scene_size"]
+    check(f_sb1[base + 3:base + stride] == src["sb1"][base + 3:base + stride],
           "the rest of scene 0 should be byte-identical")
+    # Including both snapshots, which are what this region most has to preserve.
+    for key, what in (("quest_log_scene_flags", "flag"), ("quest_log_scene_vars", "var")):
+        lo = base + TF.layout[key]
+        hi = lo + (TF.layout["num_flag_bytes"] if what == "flag"
+                   else 2 * TF.layout["vars_count"])
+        check(f_sb1[lo:hi] == src["sb1"][lo:hi],
+              f"scene 0's {what} snapshot did not carry unchanged")
+        check(any(src["sb1"][lo:hi]), f"the fixture's {what} snapshot is all zero")
 
 
 def test_migrate_exits_nonzero_and_names_the_problem_when_verification_fails():
