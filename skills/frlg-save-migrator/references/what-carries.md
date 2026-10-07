@@ -54,8 +54,9 @@ no longer fits its FRLG+ pocket (`pocket_full`), a key item FRLG+ has no index f
 2. **Saved object-event state for a map FRLG+ relaid out.** The game saves which
    object events on the current map have moved or been removed. If FRLG+ changed
    that map's object list, the saved state may not line up. 135 maps differ in
-   object-event count between the two trees, so the tool's warning about this will
-   fire often.
+   object-event count between the two trees (generated from the two trees into
+   `remap_objcount.txt`), so the tool's warning about this fires when the save was
+   made on one of those maps.
 
 Both risks come from where the player was standing when they saved. **Convert a
 save made in a Pokémon Center or in the player's bedroom**, where neither applies.
@@ -67,6 +68,19 @@ not rely on "every bag item is in its own pocket with a quantity from 1 to 999":
 that is also true of a vanilla bag read through the wrong layout. It checks that
 the total of every item id and quantity is the same before and after (less the
 losses above), that the Day Care step counter reads the same under each layout's own
-offset, and that everything in the "carries" table is byte-identical. If any check
-fails the tool exits non-zero and names it; the file it wrote should not be used,
-and the backup is the way back.
+offset. It also compares these regions byte for byte between source and result:
+flags, script variables, game stats, PC item storage, the Pokédex and play time
+(`UNTOUCHED` in `verify.py`), plus money, coins and the encryption key.
+
+The rest of the "carries" table is **carried by construction and not re-checked**: player
+name, gender, trainer and secret IDs, options, mail, the Fame Checker, the Trainer
+Tower, and every Pokémon's bytes other than its padding halfword. Those blocks are never
+rewritten, so there is nothing for a conversion to change, but nothing compares them
+afterwards either.
+
+If a check fails the tool exits non-zero and names it, **and the file it wrote is left on
+disk**. Do not load it; delete it. What is left to go back to depends on how you ran it:
+with `--apply` in place, the original was copied to `<save>.bak-<timestamp>` before it
+was overwritten, so restore from that backup. With `--apply --out NEW` there is no backup,
+because the source was never touched: the source is still intact, and `NEW` is the only
+thing to discard. (If `--out` named an existing file, that file was backed up first.)

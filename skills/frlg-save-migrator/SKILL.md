@@ -10,12 +10,17 @@ this one produces a converted save. It is built so that nothing is written by ac
 
 - **The default is a plan.** `migrate.py SAVE` prints what it would change and writes nothing.
 - **`--apply` is required to write.** Without it no file is created or modified.
-- **An in-place run takes a backup first.** `--apply` with no `--out` copies the save to
-  `<save>.bak-<timestamp>` before overwriting it. `--apply --out NEW` leaves the source untouched
-  and writes `NEW` instead, which is the safer way to run it.
-- **It verifies what it wrote.** The converted bytes are checked (sector checksums, the
-  save counter, and agreement with the source) before and after writing. If a check fails it
-  exits with an error and says so.
+- **It backs up whatever it overwrites.** `--apply` with no `--out` copies the save to
+  `<save>.bak-<timestamp>` before overwriting it (an existing `--out` file is backed up too).
+  `--apply --out NEW` to a new path leaves the source untouched and overwrites nothing, so it
+  makes no backup; it is the safer way to run it.
+- **It verifies in two stages.** Sector checksums are checked on the converted image in memory
+  before anything is written. Agreement with the source (items conserved, money, coins,
+  flags, variables, game stats, Pokédex, play time, the Day Care step counter) is checked
+  after writing, on the file re-read from disk.
+- **If verification fails, the written file is still on disk. Do not load it; discard it.**
+  The tool exits with an error naming the check. After an in-place run, restore from the
+  backup it names; after `--out`, the source was never touched.
 
 `SKILL_DIR` below means the folder containing this file.
 
@@ -51,7 +56,10 @@ this one produces a converted save. It is built so that nothing is written by ac
 `references/what-carries.md` is the field-by-field account: what is copied byte for byte
 (flags, variables, game stats, the Pokédex, play time, money, coins, PC items), what is
 converted (the bag, the Day Care, every Pokémon's boxed HP/status halfword, map IDs), what is
-initialised, and the one thing that cannot be carried. Point the user at it rather than
+initialised, and what is lost. The main loss is quantity: TMs are one bit each, so duplicate
+TMs collapse to one, and key items are one byte each, so duplicates collapse too. Items that no
+longer fit their FRLG+ pocket, key items FRLG+ has no index for, and unrecognised items are
+dropped as well. The plan lists every loss before anything is written. Point the user at it rather than
 summarising from memory.
 
 ## Recommend a safe place to convert
