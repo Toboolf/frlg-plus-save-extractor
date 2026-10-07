@@ -1,0 +1,83 @@
+{
+  "_about": "How much each section of the report is trusted, and why. Offsets and tables are generated from the FRLG+ source (tools/generate_tables.py), so the question is not 'where is this?' but 'has this been checked against a running game?'. This file is the public record: every section reads `evidence: source`, meaning the layout comes from the FRLG+ source and passes the extractor's own cross-checks. `confirm_by` says what an owner could check in their own game to promote a section further. An optional, gitignored `local.json` (see local.example.json) personalises this file for one player: it can mark a section `confirmed`, add `checked_against_save`, `save_history` and a `tracker` block, all merged over this file by gen3core.deep_merge. See references/verification.md.",
+  "sections": {
+    "key_system": {
+      "evidence": "source",
+      "how": "Key System settings decoded from a single 16-bit word documented in the FRLG+ source: mode, difficulty, Nuzlocke, IV/EV calculation, No Free Heals and Exp. modifier. Cross-check: when No Free Heals is off, every boxed Pokémon must be deposited at full HP with no status ailment, which checks that bit against the box data independently of the Key System word itself.",
+      "confirm_by": "Key System menu in game: mode, difficulty, Nuzlocke, IV/EV calculation, No Free Heals, Exp. modifier."
+    },
+    "trainer": {
+      "evidence": "source",
+      "how": "SaveBlock2 player fields plus money/coins XOR'd with encryptionKey.",
+      "confirm_by": "Trainer Card: name, ID, money, play time; Coin Case for coins."
+    },
+    "location": {
+      "evidence": "source",
+      "how": "SaveBlock1.location and lastHealLocation decoded against the generated map table.",
+      "confirm_by": "Your current map in game, and whether it matches your last Pokémon Center or healing spot."
+    },
+    "party": {
+      "evidence": "source",
+      "how": "Standard Gen 3 party layout; every checksum and stat check passes.",
+      "confirm_by": "Party screen in game: species, levels, moves, held items."
+    },
+    "boxes": {
+      "evidence": "source",
+      "how": "PokemonStorage struct from include/pokemon_storage_system.h; every box checksum is verified as it is decoded. Boxed HP and status come from a halfword FRLG+ reuses; slots deposited before FRLG+ started writing it are reported as 'not recorded' rather than guessed.",
+      "confirm_by": "PC box screen in game: species and HP/status for a few slots, especially any deposited early in the save."
+    },
+    "pokedex": {
+      "evidence": "source",
+      "how": "struct Pokedex owned/seen bitfields; owned is checked as a subset of seen.",
+      "confirm_by": "Pokédex seen/owned counts in game."
+    },
+    "flags": {
+      "evidence": "source",
+      "how": "SaveBlock1.flags decoded with names from constants/flags.h; related flags are cross-checked against each other (for example, badge count against the individual obtained-badge flags).",
+      "confirm_by": "Badge case and story-flag milestones (Sevii Islands access, Hall of Fame) in game."
+    },
+    "game_stats": {
+      "evidence": "source",
+      "how": "Cross-check: GAME_STAT_SAVED_GAME decodes to exactly the sector save counter, which proves both the offset and the encryption key.",
+      "confirm_by": "Trainer Card and the Pokémon Center records screen."
+    },
+    "items": {
+      "evidence": "source",
+      "how": "Pocket offsets walked through the item block of SaveBlock1 and checked against the next annotated field; TM Case read as a bitfield and Key Items as one-byte indices per src/item.c. Cross-check: every decoded item must belong to the pocket it was decoded from, and every quantity must be 1-999.",
+      "confirm_by": "Bag screen in game: contents of the Items, Key Items, and TM Case pockets."
+    },
+    "day_care": {
+      "evidence": "source",
+      "how": "Day Care start offset derived (the /*0x2F80*/ comment in the source is stale) and cross-checked against giftRibbons.",
+      "confirm_by": "Day Care attendants and step counters in game, at Route 5 and Four Island."
+    },
+    "roamer": {
+      "evidence": "source",
+      "how": "struct Roamer at SaveBlock1.roamer; an inactive roamer is cross-checked against an empty Hall of Fame.",
+      "confirm_by": "After beating the Champion, check the roaming beast's species in the Pokédex."
+    },
+    "master_trainers": {
+      "evidence": "source",
+      "how": "masterTrainerTitle and masterTrainerFlags, both derived from the fields they were carved out of.",
+      "confirm_by": "After beating a Master Trainer, check the name appears in the report."
+    },
+    "hall_of_fame": {
+      "evidence": "source",
+      "how": "Sectors 28-29 decoded per the save block layout; unwritten (0xFF) sectors are reported as an empty Hall of Fame rather than guessed entries.",
+      "confirm_by": "Hall of Fame records screen in game, if you have cleared it."
+    },
+    "other_pokemon": {
+      "evidence": "source",
+      "how": "Scanner over the parts of the save the known layout does not account for; finding nothing is the expected result. Nothing to check in game; a non-empty result here would itself be the finding worth investigating."
+    },
+    "hints": {
+      "evidence": "source",
+      "how": "Derived from the sections above plus the generated encounter and Extended Dex tables. Each hint is only as good as the section it cites, so it is checked by checking those, not independently."
+    }
+  },
+  "overrides": {
+    "_about": "Escape hatches for a ROM newer than the source checkout. Prefer re-running tools/generate_tables.py against a matching checkout.",
+    "item_names_extra": {},
+    "flag_labels": {}
+  }
+}

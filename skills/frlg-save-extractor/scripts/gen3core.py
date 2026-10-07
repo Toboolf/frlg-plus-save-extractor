@@ -514,6 +514,43 @@ def decrypt_substructures(b):
     return subs, checksum
 
 
+def rewrite_substructures(mon80, *, g_halfword=None, met_location=None):
+    """Return mon80 with those fields replaced, re-encrypted and re-checksummed.
+
+    `g_halfword` replaces the last halfword of substructure G; `met_location`
+    replaces byte 1 of substructure M. Both are positional facts of the Gen 3
+    format; what the values MEAN belongs to a profile.
+
+    The order is decrypt, edit, re-checksum over the PLAINTEXT, re-encrypt. A
+    checksum taken over the ciphertext, or a field written without recomputing it,
+    makes a Pokemon the game shows as a Bad Egg.
+
+    Refuses a Pokemon whose stored checksum does not already verify: editing one
+    would turn detectable corruption into valid-looking corruption. Anything past
+    byte 0x50 (a party Pokemon's tail) is carried through untouched.
+    """
+    b = bytearray(mon80)
+    pid, otid = u32(b, 0), u32(b, 4)
+    subs, calc = decrypt_substructures(bytes(b))
+    if calc != u16(b, 0x1C):
+        raise ValueError("substructure checksum does not verify; refusing to edit")
+    if g_halfword is not None:
+        g = bytearray(subs["G"])
+        struct.pack_into("<H", g, 10, g_halfword & 0xFFFF)
+        subs["G"] = bytes(g)
+    if met_location is not None:
+        m = bytearray(subs["M"])
+        m[1] = met_location & 0xFF
+        subs["M"] = bytes(m)
+    order = SUB_ORDERS[pid % 24]
+    plain = b"".join(subs[c] for c in order)
+    struct.pack_into("<H", b, 0x1C, sum(struct.unpack("<24H", plain)) & 0xFFFF)
+    key = pid ^ otid
+    for i in range(0, 48, 4):
+        struct.pack_into("<I", b, 32 + i, struct.unpack_from("<I", plain, i)[0] ^ key)
+    return bytes(b)
+
+
 def quick_valid_boxmon(b, max_species):
     """Cheap test used when scanning unknown memory for stray Pokémon."""
     if len(b) < 80 or not any(b[:80]):

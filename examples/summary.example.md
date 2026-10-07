@@ -33,7 +33,7 @@ Event flags set: 15 (story 3, trainer 2, system 10) · non-zero story variables:
 | 1 | Sporey (Parasect) | 25 | PoisonPowder 35/35, Leech Life 15/15, Flash 20/20, Cut 30/30 | Effect Spore | TinyMushroom | Relaxed (+Def -Spe) | caught_here; met Mt. Moon Lv8; Poké Ball; OT RED |
 | 2 | Sparky (Raichu) | 42 | ThunderShock 30/30, Thunderbolt 15/15, Agility 30/30, Quick Attack 30/30 | Static | — | Quiet (+SpA -Spe) | caught_here; met Viridian Forest Lv3; Poké Ball; OT RED |
 | 3 | Blastoise | 42 | Bite 25/25, Water Gun 25/25, Rain Dance 5/5, Withdraw 40/40 | Torrent | — | Jolly (+Spe -SpA) | your_name_other_id; met Route 1 Lv5; Poké Ball; OT RED |
-| 4 | Splashy (Vaporeon) | 43 | AuroraBeam 20/20, Haze 30/30, Bite 25/25, Quick Attack 30/30 | Water Absorb | — | Lax (+Def -SpD) | caught_here; met Safari Zone Lv25; Poké Ball; OT RED |
+| 4 | Tidally (Vaporeon) | 43 | AuroraBeam 20/20, Haze 30/30, Bite 25/25, Quick Attack 30/30 | Water Absorb | — | Lax (+Def -SpD) | caught_here; met Safari Zone Lv25; Poké Ball; OT RED |
 | 5 | Mimien (Mr. Mime) | 58 | Psychic 10/10, Confusion 25/25, Psybeam 20/20, Magical Leaf 20/20 | Soundproof | — | Timid (+Spe -Atk) | in_game_trade; met In-game trade Lv30; Poké Ball; OT BLUE |
 | 6 | Scorchy (Charizard) | 50 | Wing Attack 35/35, Flamethrower 15/15, Ember 25/25, Fly 15/15 | Blaze | — | Serious (neutral) | your_name_other_id; met Pallet Town Lv5; Poké Ball; OT RED |
 
@@ -41,7 +41,7 @@ Team details (IV/EV order HP/Atk/Def/SpA/SpD/Spe):
 - Sporey: HP 72/72, healthy · Atk/Def/SpA/SpD/Spe 60/57/42/52/24 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 1951
 - Sparky: HP 115/115, healthy · Atk/Def/SpA/SpD/Spe 93/64/102/85/91 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 5419
 - BLASTOISE: HP 131/131, healthy · Atk/Def/SpA/SpD/Spe 87/102/80/106/91 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 5328
-- Splashy: HP 178/178, healthy · Atk/Def/SpA/SpD/Spe 74/75/112/90/74 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 5677
+- Tidally: HP 178/178, healthy · Atk/Def/SpA/SpD/Spe 74/75/112/90/74 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 5677
 - Mimien: HP 132/132, healthy · Atk/Def/SpA/SpD/Spe 67/98/138/162/139 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 10267
 - Scorchy: HP 153/153, healthy · Atk/Def/SpA/SpD/Spe 104/98/129/105/120 · IVs 31/20/15/25/5/10 · EVs 0/0/0/0/0/0 (0) · HP Psychic 38 · Gender F · Friendship 70 · EXP to next 7766
 

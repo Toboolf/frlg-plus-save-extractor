@@ -9,15 +9,19 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # The authoritative vendoring map: "<path under shared/> <path inside a skill package>".
-# tests/test_vendored_copies_match.py parses this block, so keep one pair per line.
+# tests/test_vendored_copies_match.py (itself vendored from shared/tests/) parses this block, so keep one pair per line.
 VENDORED=(
 "shared/gen3core.py scripts/gen3core.py"
 "shared/frlgplus.py scripts/frlgplus.py"
 "shared/vanilla_frlg.py scripts/vanilla_frlg.py"
+"shared/vanilla_read.py scripts/vanilla_read.py"
 "shared/tools/generate_tables.py tools/generate_tables.py"
 "shared/tools/cparse.py tools/cparse.py"
 "shared/tools/generate_remaps.py tools/generate_remaps.py"
 "shared/tools/display_names.json tools/display_names.json"
+"shared/tests/test_no_personal_data.py tests/test_no_personal_data.py"
+"shared/tests/test_vendored_copies_match.py tests/test_vendored_copies_match.py"
+"shared/tests/test_gen3core_tables.py tests/test_gen3core_tables.py"
 )
 
 usage() {

@@ -26,8 +26,10 @@ TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 # skill package as tools/. Either way the tables go to the skill's scripts/data.
 _PARENT = os.path.dirname(TOOLS_DIR)
 if os.path.basename(_PARENT) == "shared":
-    SKILL_DIR = os.path.join(os.path.dirname(_PARENT), "skills", "frlg-save-extractor")
+    _SKILLS_ROOT = os.path.join(os.path.dirname(_PARENT), "skills")
+    SKILL_DIR = os.path.join(_SKILLS_ROOT, "frlg-save-extractor")
 else:
+    _SKILLS_ROOT = None
     SKILL_DIR = _PARENT
 DATA_DIR = os.path.join(SKILL_DIR, "scripts", "data")
 OUT_DIR = DATA_DIR          # main() repoints this for --game vanilla
@@ -468,6 +470,17 @@ def gen_save_layout(repo, consts, out, game="frlgplus"):
     return layout
 
 
+# One bit per Kanto species (1..151) plus Grandmaster (152), so 153 bits -> 20 bytes.
+# Only a lower bound on the emitted length: the real length is the distance to
+# registeredTexts, and this just refuses a carve-out that got too small for the flags.
+MASTER_TRAINER_BITS = 153
+
+
+# The field right after SaveBlock1.seen1, which is where that 52-byte array ends.
+# FRLG+ renamed vanilla's berryBlenderRecords to filler_062C and carved
+# masterTrainerTitle out of its last byte, without moving the field itself.
+_AFTER_SEEN1 = {"frlgplus": "filler_062C", "vanilla": "berryBlenderRecords"}
+
 VANILLA_POCKETS = {"items": "BAG_ITEMS_COUNT", "key_items": "BAG_KEYITEMS_COUNT",
                    "poke_balls": "BAG_POKEBALLS_COUNT", "tmhm": "BAG_TMHM_COUNT",
                    "berries": "BAG_BERRIES_COUNT"}
@@ -564,6 +577,68 @@ def compute_layout(repo, consts, game="frlgplus"):
 
     layout["sb1_pos"] = annotated("pos")
     layout["sb1_location"] = annotated("location")
+    layout["sb1_map_layout_id"] = annotated("mapLayoutId")
+    layout["sb1_continue_game_warp"] = annotated("continueGameWarp")
+    layout["sb1_dynamic_warp"] = annotated("dynamicWarp")
+    layout["sb1_escape_warp"] = annotated("escapeWarp")
+    layout["sb1_quest_log"] = annotated("questLog")
+    layout["quest_log_scene_count"] = consts["QUEST_LOG_SCENE_COUNT"]
+    # QuestLogScene has a zero-length terminator, so sizeof() is not in a comment.
+    # easyChatProfile is the next annotated field, so the stride is the span / count.
+    scene_span = annotated("easyChatProfile") - layout["sb1_quest_log"]
+    count = layout["quest_log_scene_count"]
+    if scene_span % count:
+        raise SystemExit(
+            f"quest log span {scene_span:#x} does not divide by {count} scenes")
+    layout["quest_log_scene_size"] = scene_span // count
+    # The stride has no annotation of its own, so check it against one: QuestLogScene
+    # ends with `/*0x0668*/ u16 end[0]`. A field inserted between questLog and
+    # easyChatProfile would move the span while both SaveBlock1 annotations stayed
+    # self-consistent, and the migrator would then write into the wrong bytes.
+    qs = text[text.index("struct QuestLogScene"):]
+    qs = qs[:cparse._matching_brace(qs, qs.index("{")) + 1]
+    m = re.search(r"/\*(0x[0-9A-Fa-f]+)\*/\s*u16\s+end\[0\]", qs)
+    if not m:
+        raise SystemExit("no annotated `end[0]` on struct QuestLogScene to check the stride against")
+    if int(m.group(1), 16) != layout["quest_log_scene_size"]:
+        raise SystemExit(
+            f"quest log scene stride is {layout['quest_log_scene_size']:#x} from the SaveBlock1 span "
+            f"but struct QuestLogScene is annotated {int(m.group(1), 16):#x} long")
+
+    # Each recorded scene snapshots the whole flag array and the whole var array.
+    # SaveBlock1 does not name them - they are fields of struct QuestLogScene - and a
+    # migration has to show they carried unchanged through a region it rewrites
+    # wholesale, so emit their offsets WITHIN a scene.
+    #
+    # `flags` carries a live annotation. `vars`' own /*0x02c8*/ comment is STALE by
+    # construction: it is where vars would start if flags were 0x180 bytes, and
+    # NUM_FLAG_BYTES is 0x120 in both trees. So walk vars off flags and NUM_FLAG_BYTES
+    # and require the walk past vars to land exactly on the ANNOTATED
+    # objectEventTemplates, which pins the start and both array lengths at once.
+    def scene_annotated(field):
+        hit = re.search(r"/\*(0x[0-9A-Fa-f]+)\*/\s*(?:u8|u16|struct\s+\w+)\s+"
+                        + field + r"\b", qs)
+        if not hit:
+            raise SystemExit(f"struct QuestLogScene has no annotated `{field}` to walk from")
+        return int(hit.group(1), 16)
+
+    scene_flags = scene_annotated("flags")
+    scene_vars = scene_flags + consts["FLAGS_COUNT"] // 8
+    after_scene_vars = scene_vars + 2 * consts["VARS_COUNT"]
+    scene_templates = scene_annotated("objectEventTemplates")
+    if after_scene_vars != scene_templates:
+        raise SystemExit(
+            f"the quest log scene's snapshots walk from flags at 0x{scene_flags:X} "
+            f"through {consts['FLAGS_COUNT'] // 8} flag bytes and "
+            f"{consts['VARS_COUNT']} vars to 0x{after_scene_vars:X}, but "
+            f"struct QuestLogScene.objectEventTemplates is annotated at "
+            f"0x{scene_templates:X} - one of those three has changed.")
+    if after_scene_vars > layout["quest_log_scene_size"]:
+        raise SystemExit(
+            f"the quest log scene's snapshots end at 0x{after_scene_vars:X}, past the "
+            f"0x{layout['quest_log_scene_size']:X}-byte scene they are inside")
+    layout["quest_log_scene_flags"] = scene_flags
+    layout["quest_log_scene_vars"] = scene_vars
     layout["sb1_last_heal_location"] = annotated("lastHealLocation")
     layout["sb1_party_count"] = annotated("playerPartyCount")
     layout["sb1_party"] = annotated("playerParty")
@@ -571,6 +646,7 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb1_vars"] = annotated("vars")
     layout["sb1_game_stats"] = annotated("gameStats")
     daycare_mon_size = annotated("unused_3D24") - annotated("route5DayCareMon")
+    easy_chat = None
     if game == "vanilla":
         # The vanilla /*0x2F80*/ annotation on `daycare` is correct there.
         daycare = annotated("daycare")
@@ -578,7 +654,14 @@ def compute_layout(repo, consts, game="frlgplus"):
         # The /*0x2F80*/ comment on `daycare` is a vanilla leftover: FRLG+ replaced
         # dewfordTrends[5] (40 bytes) with filler_EasyChatPairs[36], moving the Day Care
         # down by 4. Walk it instead and check it lands on giftRibbons.
-        daycare = annotated("filler_oldMan") + 64 + 36
+        #
+        # filler_EasyChatPairs' own /*0x2F54*/ comment is stale for the same reason —
+        # it is vanilla's dewfordTrends offset, and it would put filler_oldMan[64] only
+        # 60 bytes from the field after it. Walk past filler_oldMan instead. Both u8
+        # arrays, so no padding: the walk below checks the 36 lands exactly on daycare,
+        # which the giftRibbons check in turn pins.
+        easy_chat = annotated("filler_oldMan") + 64
+        daycare = easy_chat + 36
     # offspringPersonality is u16 in vanilla and u32 in FRLG+; read which from the source.
     m = re.search(r"struct DayCare\s*\{[^}]*?\bu(16|32)\s+offspringPersonality", text)
     if not m:
@@ -601,10 +684,50 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb1_route5_daycare_mon"] = annotated("route5DayCareMon")
     if game != "vanilla":        # the Key System flags are an FRLG+ addition
         layout["sb1_last_viewed_pokedex_entry"] = annotated("lastViewedPokedexEntry")
+        # keyFlags has no annotation of its own: it was carved in after a u16, so
+        # the walk is lastViewedPokedexEntry + 2. Its WIDTH matters as much as its
+        # offset, because a migration has to zero the whole struct rather than only
+        # the halfword the bitfields occupy, so count the u16 storage units the
+        # source declares and check the walk lands on trainerRematchStepCounter.
         layout["sb1_key_flags"] = layout["sb1_last_viewed_pokedex_entry"] + 2
+        layout["key_flags_bytes"] = _bitfield_struct_size(text, "KeySystemFlags")
+        after_flags = layout["sb1_key_flags"] + layout["key_flags_bytes"]
+        if after_flags != annotated("trainerRematchStepCounter"):
+            raise SystemExit(
+                f"struct KeySystemFlags walks from 0x{layout['sb1_key_flags']:X} to "
+                f"0x{after_flags:X} but SaveBlock1.trainerRematchStepCounter is annotated "
+                f"at 0x{annotated('trainerRematchStepCounter'):X} — the Key System "
+                f"struct changed size.")
     if game != "vanilla":        # Master Trainers is an FRLG+ addition
+        # masterTrainerTitle has no annotation either: it was carved out of
+        # filler_062C, which FRLG+ shortened from 6 bytes to 5. One u8, so the walk
+        # has to land exactly on lastViewedPokedexEntry, which IS annotated.
         layout["sb1_master_trainer_title"] = annotated("filler_062C") + 5
+        if layout["sb1_master_trainer_title"] + 1 != annotated("lastViewedPokedexEntry"):
+            raise SystemExit(
+                f"masterTrainerTitle walks to 0x{layout['sb1_master_trainer_title']:X} but "
+                f"SaveBlock1.lastViewedPokedexEntry is annotated at "
+                f"0x{annotated('lastViewedPokedexEntry'):X}, so the byte carved out of "
+                f"filler_062C is not where this says it is.")
         layout["sb1_master_trainer_flags"] = annotated("unused_3A94") + 44
+        # masterTrainerFlags[20] was carved out of unused_3A94's original 64 bytes, so
+        # nothing between there and registeredTexts changed size and that field's
+        # /*0x3AD4*/ annotation is still live rather than a vanilla leftover. The
+        # distance to it is therefore the bitfield's length, which is what a migration
+        # has to zero — emitted so no caller has to hard-code the 20.
+        layout["master_trainer_flags_bytes"] = (annotated("registeredTexts")
+                                                - layout["sb1_master_trainer_flags"])
+        if layout["master_trainer_flags_bytes"] * 8 < MASTER_TRAINER_BITS:
+            raise SystemExit(
+                f"masterTrainerFlags is {layout['master_trainer_flags_bytes']} bytes from "
+                f"unused_3A94 to registeredTexts, too few for {MASTER_TRAINER_BITS} "
+                f"Master Trainer bits — the carve-out moved.")
+    if game != "vanilla":
+        # filler_EasyChatPairs replaces vanilla's dewfordTrends[5]; the field does not
+        # exist in vanilla at all, where that space is dewfordTrends. A migration zeroes
+        # it rather than inherit whatever a vanilla save left there. Its length is the
+        # distance to the Day Care, which is why no separate size key is needed.
+        layout["sb1_filler_easy_chat"] = easy_chat
     layout["num_flag_bytes"] = consts["FLAGS_COUNT"] // 8
     layout["flags_count"] = consts["FLAGS_COUNT"]
     layout["vars_count"] = consts["VARS_COUNT"]
@@ -624,6 +747,18 @@ def compute_layout(repo, consts, game="frlgplus"):
             raise SystemExit(f"no annotated offset for SaveBlock2.{field}")
         return int(m.group(1), 16)
 
+    def struct_size(name):
+        # The `// size: 0x...` comment trails the closing brace, outside the sliced body.
+        start = text.index(f"struct {name}")
+        close = start + cparse._matching_brace(text[start:], text[start:].index("{"))
+        m = re.match(r"[^\n]*?//\s*size:\s*(0x[0-9A-Fa-f]+)", text[close + 1:])
+        if not m:
+            raise SystemExit(f"no `// size:` comment on struct {name}")
+        return int(m.group(1), 16)
+
+    layout["sb1_size"] = struct_size("SaveBlock1")
+    layout["sb2_size"] = struct_size("SaveBlock2")
+
     layout["sb2_player_name"] = annotated2("playerName")
     layout["sb2_player_gender"] = annotated2("playerGender")
     layout["sb2_trainer_id"] = annotated2("playerTrainerId")
@@ -642,6 +777,55 @@ def compute_layout(repo, consts, game="frlgplus"):
     layout["sb2_dex_owned"] = dex_at + owned
     layout["sb2_dex_seen"] = dex_at + seen
     layout["dex_flag_bytes"] = seen - owned
+
+    # ---- regions spec 5.3 says a conversion must carry unchanged.
+    # The migrator's verifier compares each of them byte for byte between source and
+    # result, so each needs a length as well as an offset, and neither may be
+    # hand-written. The length is the distance to the next annotated field, which is
+    # how roamer_size is derived too; on top of that each gets one cross-check against
+    # a value that comes from somewhere else, so a stale annotation on either end
+    # fails here rather than quietly resizing a comparison.
+    layout["sb1_seen1"] = annotated("seen1")
+    layout["seen1_bytes"] = annotated(_AFTER_SEEN1[game]) - layout["sb1_seen1"]
+    layout["sb1_seen2"] = annotated("seen2")
+    layout["seen2_bytes"] = annotated("rivalName") - layout["sb1_seen2"]
+    # Both are DEX_FLAGS_NO arrays, so both must be as long as the Pokedex's own
+    # `seen` array, whose length came from struct Pokedex's annotations above.
+    for key in ("seen1", "seen2"):
+        if layout[f"{key}_bytes"] != layout["dex_flag_bytes"]:
+            raise SystemExit(
+                f"SaveBlock1.{key} spans {layout[f'{key}_bytes']} bytes but a Pokedex flag "
+                f"array is {layout['dex_flag_bytes']} — one of the two annotations is stale.")
+
+    layout["sb1_mail"] = annotated("mail")
+    layout["mail_bytes"] = annotated("additionalPhrases") - layout["sb1_mail"]
+    if layout["mail_bytes"] <= 0 or layout["mail_bytes"] % consts["MAIL_COUNT"]:
+        raise SystemExit(f"SaveBlock1.mail spans {layout['mail_bytes']} bytes, which is not "
+                         f"{consts['MAIL_COUNT']} whole struct Mail")
+
+    layout["sb1_fame_checker"] = annotated("fameChecker")
+    layout["fame_checker_bytes"] = annotated("unused_3A94") - layout["sb1_fame_checker"]
+    after_rival = annotated("rivalName") + consts["PLAYER_NAME_LENGTH"] + 1
+    if layout["sb1_fame_checker"] != after_rival:
+        raise SystemExit(f"SaveBlock1.fameChecker is annotated at "
+                         f"0x{layout['sb1_fame_checker']:X} but rivalName ends at "
+                         f"0x{after_rival:X}")
+    if layout["fame_checker_bytes"] <= 0:
+        raise SystemExit("SaveBlock1.fameChecker and unused_3A94 are annotated out of order")
+
+    # trainerTower is SaveBlock1's last field, so its length is whatever is left of
+    # the struct — which is the cross-check: it has to divide into whole challenges.
+    layout["sb1_trainer_tower"] = annotated("trainerTower")
+    layout["trainer_tower_bytes"] = layout["sb1_size"] - layout["sb1_trainer_tower"]
+    if annotated("towerChallengeId") + 4 != layout["sb1_trainer_tower"]:
+        raise SystemExit(f"SaveBlock1.trainerTower is annotated at "
+                         f"0x{layout['sb1_trainer_tower']:X}, not one u32 past "
+                         f"towerChallengeId at 0x{annotated('towerChallengeId'):X}")
+    if (layout["trainer_tower_bytes"] <= 0
+            or layout["trainer_tower_bytes"] % consts["NUM_TOWER_CHALLENGE_TYPES"]):
+        raise SystemExit(f"trainerTower runs {layout['trainer_tower_bytes']} bytes to the end "
+                         f"of SaveBlock1, which is not "
+                         f"{consts['NUM_TOWER_CHALLENGE_TYPES']} whole challenges")
 
     ps = cparse.repo_path(repo, "include/pokemon_storage_system.h")
     with open(ps, encoding="utf-8") as f:
@@ -673,6 +857,34 @@ def compute_layout(repo, consts, game="frlgplus"):
 def _hdef(text, name):
     m = re.search(r"#define\s+" + name + r"\s+(\S+)", text)
     return int(m.group(1), 0)
+
+
+def _bitfield_struct_size(text, name):
+    """sizeof() a struct whose every member is a u16 or a u16 bitfield.
+
+    Bitfields pack into 16-bit storage units in declaration order and a member
+    that would not fit opens a new unit, so the size is 2 x the number of units.
+    Used for struct KeySystemFlags, where the migration has to zero the whole
+    struct: its bitfields fill one u16 and `padding2` is a second one, and writing
+    only the first would leave the second inheriting vanilla's bytes.
+    """
+    start = text.index(f"struct {name}")
+    body = text[start:start + cparse._matching_brace(text[start:], text[start:].index("{")) + 1]
+    units, bits = 0, 0
+    for m in re.finditer(r"\bu16\s+\w+\s*(?::\s*(\d+))?\s*;", body):
+        if m.group(1) is None:                 # a plain u16 always starts a new unit
+            units, bits = units + 1, 0
+            continue
+        width = int(m.group(1))
+        if width > 16:
+            raise SystemExit(f"struct {name}: a u16 bitfield cannot be {width} bits wide")
+        if bits == 0 or bits + width > 16:
+            units, bits = units + 1, width
+        else:
+            bits += width
+    if not units:
+        raise SystemExit(f"struct {name} has no u16 members; it is not a bitfield struct")
+    return 2 * units
 
 
 def _braced_list(expr):
@@ -765,13 +977,20 @@ def main():
                     help="which tree --repo points at (default: frlgplus)")
     ap.add_argument("--repo", required=True,
                     help="checkout of Deokishisu/FRLG-Plus, or of pret/pokefirered for --game vanilla")
+    ap.add_argument("--skill", default="frlg-save-extractor",
+                    help="which package under skills/ to write tables into")
     args = ap.parse_args()
     repo = os.path.abspath(args.repo)
     for rel in REQUIRED[args.game]:
         if not os.path.isfile(os.path.join(repo, rel)):
             raise SystemExit(f"{repo} is missing {rel}, which --game {args.game} needs")
     global OUT_DIR
-    OUT_DIR = DATA_DIR if args.game == "frlgplus" else os.path.join(DATA_DIR, "vanilla")
+    data_dir = DATA_DIR
+    if args.skill != "frlg-save-extractor":
+        if _SKILLS_ROOT is None:
+            raise SystemExit("--skill needs the source repo's shared/tools/ copy of this script")
+        data_dir = os.path.join(_SKILLS_ROOT, args.skill, "scripts", "data")
+    OUT_DIR = data_dir if args.game == "frlgplus" else os.path.join(data_dir, "vanilla")
 
     consts = Consts()
     for rel in ["include/constants/global.h", "include/constants/species.h", "include/constants/items.h",

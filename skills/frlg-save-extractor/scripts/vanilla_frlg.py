@@ -46,9 +46,23 @@ def remap_rows(data_dir, filename):
 
 
 def remaps(data_dir):
-    """Everything a vanilla ID has to be translated through, keyed by what it is."""
+    """Everything a vanilla ID has to be translated through, keyed by what it is.
+
+    `maps_by_name` and `object_counts` are the two the ID remap needs to warn about
+    spec 7: saved object-event state belongs to the map the player is standing on,
+    so naming that map is how the warning finds out whether its object list moved.
+    """
+    maps = remap_rows(data_dir, "remap_maps.txt")
     return {
-        "maps": {v: f for v, f, _ in remap_rows(data_dir, "remap_maps.txt")},
+        "maps": {v: f for v, f, _ in maps},
+        "maps_by_name": {name: (v, f) for v, f, name in maps},
         "layouts": {v: f for v, f, _ in remap_rows(data_dir, "remap_layouts.txt")},
         "mapsec": {v: f for v, f, _ in remap_rows(data_dir, "remap_mapsec.txt")},
+        "object_counts": object_count_changes(data_dir),
     }
+
+
+def object_count_changes(data_dir):
+    """{map name: (vanilla count, FRLG+ count)} for maps whose object events moved."""
+    return {name: (a, b) for a, b, name in
+            remap_rows(data_dir, "remap_objcount.txt")}
