@@ -232,14 +232,15 @@ def compare_quest_log(src_sb1, out_sb1, vanilla_L, plus_L):
 
 
 def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
-    # `tv` is reserved: unused today, kept so the signature stays as specified.
     """Every way the result disagrees with the source. Empty means it checks out.
 
     `losses` are the plan's documented losses; each carries the item id and how
     much of the multiset it removes ("lost"), so the one allowed exception
-    (duplicate TM quantities) and the other three kinds are subtracted from what
-    the source is expected to yield. An undocumented difference is a problem.
+    (duplicate TM quantities) and the other four kinds in DOCUMENTED_LOSS_KINDS are
+    subtracted from what the source is expected to yield. An undocumented difference
+    is a problem.
     """
+    # `tv` is reserved: unused today, kept so the signature stays as specified.
     problems = []
     best, _ = choose_slot(out_raw)
     if not best["valid"]:

@@ -68,7 +68,8 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
                        player="ASH", map_group=3, map_num=0, layout_id=1,
                        warp_id=7, warp_x=13, warp_y=21,
                        daycare_step=0, daycare_offspring=0, daycare_mons=b"",
-                       route5_daycare_mon=b"", quest_log=(), one_slot_only=False):
+                       route5_daycare_mon=b"", quest_log=(), extra_sb1=(),
+                       one_slot_only=False):
     """A 128 KB vanilla save. Pocket arguments are lists of (item id, quantity)."""
     sb1 = bytearray(L["sb1_size"])
     sb2 = bytearray(L["sb2_size"])
@@ -133,6 +134,12 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
                 continue
             o = L["pc_boxes"] + (bx * L["in_box_count"] + sl) * 80
             pc[o:o + 80] = m
+
+    # Arbitrary bytes at a generated SaveBlock1 offset, for a test that needs the
+    # source to hold something at a place no other argument reaches. Applied last, so
+    # it wins over anything above it.
+    for off, data in extra_sb1:
+        sb1[off:off + len(data)] = data
 
     return _assemble(bytes(sb1), bytes(sb2), bytes(pc), save_counter, one_slot_only)
 

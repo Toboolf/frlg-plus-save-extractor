@@ -82,11 +82,63 @@ def looks_like_frlgplus(src, plus_tables):
     return None
 
 
+def write_spans(p, L):
+    """Every (start, end, name) span the plan writes into SaveBlock1.
+
+    The PC's box slots are left out on purpose: they are addressed as
+    pc_boxes + (box * in_box_count + slot) * BOX_MON_SIZE, so two of them cannot
+    collide without the layout's own arithmetic being wrong, and they are in a
+    different block from everything here.
+    """
+    spans = []
+    for key, data in p["writes"].items():
+        if key.startswith("__"):
+            continue
+        spans.append((L[key], L[key] + len(data), key))
+    # The one write with no layout key of its own: the vanilla item slots FRLG+ no
+    # longer uses, which run from the end of the Held Items pocket to the end of the
+    # item block. It is a write like any other and has to be in the guard.
+    leftover = p["writes"]["__leftover_item_slots"]
+    start = L["sb1_bag_held_items"] + 4 * L["bag_held_items_count"]
+    spans.append((start, start + len(leftover), "__leftover_item_slots"))
+    for i, mon in enumerate(p["mons"]["party"]):
+        if mon is None:
+            continue
+        off = L["sb1_party"] + PARTY_MON_SIZE * i
+        spans.append((off, off + len(mon), f"party slot {i + 1}"))
+    return spans
+
+
+def check_write_set(p, L):
+    """Every way the plan's write set could be unsound, as sentences.
+
+    assemble_blocks applies about twenty writes blindly by offset in dict order, so
+    two spans landing on the same byte would be a silent last-writer-wins, and a span
+    running past the end of SaveBlock1 would be a silent truncation. Both are
+    properties of the whole set rather than of any one rule, so nothing but a check
+    over the set can see them.
+    """
+    problems = []
+    spans = sorted(write_spans(p, L))
+    for lo, hi, name in spans:
+        if lo < 0 or hi > L["sb1_size"]:
+            problems.append(f"{name} writes 0x{lo:X}-0x{hi:X}, outside SaveBlock1 "
+                            f"(0x0-0x{L['sb1_size']:X})")
+    for (lo, hi, name), (next_lo, next_hi, next_name) in zip(spans, spans[1:]):
+        if next_lo < hi:
+            problems.append(f"{name} (0x{lo:X}-0x{hi:X}) overlaps {next_name} "
+                            f"(0x{next_lo:X}-0x{next_hi:X})")
+    return problems
+
+
 def assemble_blocks(p, src, tf, vanilla_L=None):
     """Apply the plan's writes to copies of SaveBlock1 and the PC. Every offset is a
     generated layout key. Pokémon go back to the PHYSICAL slot they came from:
     compacting would hand the game a different party."""
     L = tf.layout
+    unsound = check_write_set(p, L)
+    if unsound:
+        raise ValueError("; ".join(unsound))
     sb1 = bytearray(src["sb1"])
     for key, data in p["writes"].items():
         if key.startswith("__"):
@@ -198,7 +250,11 @@ def main():
     # Everything below up to the write happens in memory. The converted image must
     # pass its own checksums BEFORE any file is touched, so a failure here leaves
     # the original exactly as it was.
-    sb1, pc = assemble_blocks(p, src, tf, tv.layout)
+    try:
+        sb1, pc = assemble_blocks(p, src, tf, tv.layout)
+    except ValueError as e:
+        sys.exit(f"Refusing to write: this conversion's own write set is unsound, so "
+                 f"it would clobber bytes it did not mean to: {e}")
     out_raw = savewrite.apply_writes(raw, src["slot"], tf.layout, sb1, pc)
     bad = savewrite.verify_all_checksums(out_raw, savewrite.section_sizes(tf.layout))
     if bad:

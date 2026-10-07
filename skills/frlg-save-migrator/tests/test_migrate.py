@@ -754,6 +754,22 @@ def test_verify_passes_a_clean_conversion_and_documents_tm_duplicates():
           f"undocumented TM loss should be flagged: {undocumented}")
 
 
+def poke_and_reseal(img, block, offset, value):
+    """Change one byte of SaveBlock1 ("sb1") or SaveBlock2 ("sb2") in a written image
+    and re-seal that sector's checksum, so only the content differs and the verifier
+    alone has to notice."""
+    sid = 0 if block == "sb2" else 1 + offset // SECTOR_DATA_SIZE
+    in_sector = offset if block == "sb2" else offset % SECTOR_DATA_SIZE
+    best, _ = gen3core.choose_slot(img)
+    base = {i["section_id"]: i["physical_sector"]
+            for i in best["sector_info"]}[sid] * SECTOR_SIZE
+    buf = bytearray(img)
+    buf[base + in_sector] = value
+    struct.pack_into("<H", buf, base + 0xFF6, savewrite.sector_checksum(
+        bytes(buf[base:base + SECTOR_SIZE]), savewrite.section_sizes(TF.layout)[sid]))
+    return bytes(buf)
+
+
 def test_verify_flags_each_way_a_result_can_disagree():
     raw = _bag_save()
     out = _convert_to_bytes(raw)
@@ -761,20 +777,7 @@ def test_verify_flags_each_way_a_result_can_disagree():
     src = read_vanilla(raw, TV)
     best, _ = verify.choose_slot(out)
     sizes = savewrite.section_sizes(L)
-    where = {i["section_id"]: i["physical_sector"] for i in best["sector_info"]}
-
-    def poke(img, block, offset, value):
-        """Change one byte of SaveBlock1 ("sb1") or SaveBlock2 ("sb2") and re-seal
-        that sector's checksum, so only the content differs and the verifier alone
-        has to notice."""
-        sid = 0 if block == "sb2" else 1 + offset // SECTOR_DATA_SIZE
-        in_sector = offset if block == "sb2" else offset % SECTOR_DATA_SIZE
-        base = where[sid] * SECTOR_SIZE
-        buf = bytearray(img)
-        buf[base + in_sector] = value
-        chunk = bytes(buf[base:base + SECTOR_SIZE])
-        struct.pack_into("<H", buf, base + 0xFF6, savewrite.sector_checksum(chunk, sizes[sid]))
-        return bytes(buf)
+    poke = poke_and_reseal
 
     def problems_for(img):
         return verify_conversion(src, img, TV.layout, L, TV, TF)
@@ -838,7 +841,15 @@ def test_an_unrecognised_loss_kind_is_a_problem_not_an_excuse():
     check(any("unrecognised loss kind" in x for x in got), f"bogus kind not flagged: {got}")
     # The bogus excuse is refused: Potion is intact, so the only problem is the kind.
     check(len(got) == 1, f"only the unrecognised kind should be reported: {got}")
-    # And it is not subtracted: pretend the Potion went missing and it must still show.
+    # And it really is not subtracted: with the Potion actually missing from the
+    # result, the unrecognised excuse must not cover for it, so conservation fails
+    # alongside the unrecognised kind rather than instead of it.
+    gone = poke_and_reseal(out, "sb1", TF.layout["sb1_bag_medicine"], 0)
+    got2 = _verify(raw, gone, bogus)
+    check(any("unrecognised loss kind" in x for x in got2),
+          f"the unrecognised kind should still be reported: {got2}")
+    check(any("not conserved" in x and "Potion" in x for x in got2),
+          f"the bogus excuse must not cover a real loss: {got2}")
 
 
 def test_a_key_item_with_quantity_two_is_reported_as_a_loss():
@@ -857,6 +868,88 @@ def test_a_key_item_with_quantity_two_is_reported_as_a_loss():
     check(_verify(raw, out, p["losses"]) == [], f"should verify with the loss: {_verify(raw, out, p['losses'])}")
     check(any("not conserved" in x for x in _verify(raw, out)),
           "without the loss it must still fail")
+
+
+def test_the_write_set_is_disjoint_and_inside_saveblock1():
+    """assemble_blocks applies about twenty writes blindly by offset in dict order.
+    Nothing checked that two of them do not land on the same byte, or that one does
+    not run off the end of SaveBlock1, so a last-writer-wins collision would be
+    invisible. The Four Island Day Care is the case that nearly was one: its block
+    carries two Pokemon, which is why they are spliced into it rather than written
+    again on top of it.
+    """
+    raw = _pokemon_everywhere_save()
+    src = read_vanilla(raw, TV)
+    p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
+    check(migrate.check_write_set(p, TF.layout) == [],
+          f"the real write set is not sound: {migrate.check_write_set(p, TF.layout)}")
+    spans = migrate.write_spans(p, TF.layout)
+    check(len(spans) > 15, f"only {len(spans)} write spans; the guard covers too little")
+    names = {n for _lo, _hi, n in spans}
+    for expected in ("sb1_daycare", "sb1_route5_daycare_mon",
+                     "__leftover_item_slots", "party slot 1"):
+        check(expected in names, f"the guard does not cover {expected}")
+
+    # The guard must be able to fail, in both ways.
+    overlap = dict(p, writes=dict(p["writes"]))
+    # One byte too long, so the Day Care block runs into offspringPersonality.
+    overlap["writes"]["sb1_daycare"] = p["writes"]["sb1_daycare"] + b"\0"
+    check(any("overlaps" in x for x in migrate.check_write_set(overlap, TF.layout)),
+          "an overlapping write was not reported")
+    over = dict(p, writes=dict(p["writes"]))
+    over["writes"]["sb1_trainer_tower"] = bytes(TF.layout["sb1_size"])
+    problems = migrate.check_write_set(over, TF.layout)
+    check(any("outside SaveBlock1" in x for x in problems),
+          f"a write past the end of SaveBlock1 was not reported: {problems}")
+
+    # And assemble_blocks refuses rather than applying an unsound set.
+    try:
+        migrate.assemble_blocks(overlap, src, TF, TV.layout)
+        check(False, "assemble_blocks should refuse an overlapping write set")
+    except ValueError:
+        pass
+
+
+def test_an_unsound_write_set_is_one_sentence_not_a_traceback():
+    raw = fixtures.build_vanilla_save(party=[fixtures.mon("Bulbasaur", 5)])
+    src_path = write_temp(raw)
+    out_path = os.path.join(os.path.dirname(src_path), "c.srm")
+    argv = ["migrate.py", src_path, "--apply", "--out", out_path,
+            "--source-version", "fr"]
+    out, err = io.StringIO(), io.StringIO()
+    code = None
+    with mock.patch.object(sys, "argv", argv), \
+            mock.patch.object(migrate, "check_write_set",
+                              return_value=["sb1_coins overlaps sb1_money"]), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            migrate.main()
+        except SystemExit as e:
+            code = e.code
+    check(isinstance(code, str) and "write set" in code,
+          f"should refuse in one sentence, exit was {code!r}")
+    check(not os.path.exists(out_path), "a refused run wrote the output anyway")
+
+
+def test_stale_vanilla_bytes_inside_the_key_system_struct_are_cleared():
+    """End to end for rule 5's width: the two bytes past the bitfield halfword are
+    `u16 padding2` of a struct FRLG+ reads. A source holding data there must not pass
+    it through."""
+    L = TF.layout
+    stale = b"\xAB\xCD"
+    raw = fixtures.build_vanilla_save(
+        party=[fixtures.mon("Bulbasaur", 5)],
+        extra_sb1=[(L["sb1_key_flags"] + 2, stale)])
+    src = read_vanilla(raw, TV)
+    check(src["sb1"][L["sb1_key_flags"] + 2:L["sb1_key_flags"] + 4] == stale,
+          "the fixture should hold stale bytes inside the Key System struct")
+    out = _convert_to_bytes(raw)
+    got = read_frlgplus_sb1(out)[L["sb1_key_flags"]:
+                                 L["sb1_key_flags"] + L["key_flags_bytes"]]
+    check(got == rules.build_key_flags(L, "fr"),
+          f"the whole struct should be written, got {got!r}")
+    check(got[2:] == bytes(L["key_flags_bytes"] - 2),
+          f"stale bytes survived inside struct KeySystemFlags: {got!r}")
 
 
 def test_the_untouched_list_is_all_actually_compared():

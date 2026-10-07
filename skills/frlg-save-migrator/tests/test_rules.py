@@ -101,9 +101,16 @@ def test_the_tm_bit_comes_from_the_table_not_from_id_arithmetic():
     """Defends the lookup in tables.tmhm against a regression to id - item_tm01.
 
     In today's item data the two agree for every entry, so no real TM can tell
-    them apart. This swaps two table entries on a wrapper, so the table position
-    and the arithmetic position of TM01 and TM02 disagree; only a rule that reads
-    the table puts the bits where the table says. A real HM is checked as well.
+    them apart. In fact they cannot diverge at all as things stand: the generator
+    builds each row's item_id as ITEM_TM01 + tm_index, so index and id arithmetic
+    agree by construction. The test is kept anyway, because what it defends is the
+    rule READING the table rather than that invariant holding: if the generator ever
+    stops deriving the id that way, this is the only thing standing between the
+    change and a bag whose TM bits are silently in the wrong places.
+
+    It swaps two table entries on a wrapper, so the table position and the
+    arithmetic position of TM01 and TM02 disagree; only a rule that reads the table
+    puts the bits where the table says. A real HM is checked as well.
     """
     class Swapped:
         def __init__(self, real):
@@ -739,7 +746,7 @@ def test_object_event_drift_on_the_saved_map_is_reported():
 def test_key_flags_set_normal_exp_and_the_source_version():
     """A zero-filled key-flag word means expMod == 0, which battle_script_commands.c
     reads as no EXP ever. new_game.c:157 sets it to 2."""
-    fr, lg = build_key_flags("fr"), build_key_flags("lg")
+    fr, lg = (u16(build_key_flags(F, "fr"), 0), u16(build_key_flags(F, "lg"), 0))
     for name, w in (("fr", fr), ("lg", lg)):
         check((w >> 8) & 3 == 2, f"{name}: expMod is {(w >> 8) & 3}, must be 2")
         check(w & 3 == 0, f"{name}: difficulty should be normal")
@@ -750,10 +757,27 @@ def test_key_flags_set_normal_exp_and_the_source_version():
     check((lg >> 2) & 1 == 1, "LeafGreen is version bit 1")
 
 
+def test_the_whole_key_system_struct_is_written_not_only_its_bitfield_halfword():
+    """struct KeySystemFlags is FOUR bytes: the bitfields fill one u16 and padding2
+    is a second u16. Writing only the halfword leaves 0x636-0x638 holding whatever
+    the vanilla save had there - stale data inside a struct FRLG+ reads, which is
+    exactly what rule 6 exists to prevent. The width is generated, not assumed.
+    """
+    check(F["key_flags_bytes"] == 4,
+          f"KeySystemFlags should be 4 bytes, the layout says {F['key_flags_bytes']}")
+    for version in ("fr", "lg"):
+        word = build_key_flags(F, version)
+        check(len(word) == F["key_flags_bytes"],
+              f"{version}: build_key_flags wrote {len(word)} of "
+              f"{F['key_flags_bytes']} bytes")
+        check(word[2:] == bytes(F["key_flags_bytes"] - 2),
+              f"{version}: padding2 should be zero, got {word[2:]!r}")
+
+
 def test_key_flags_refuse_a_version_that_is_not_fr_or_lg():
     for bad in ("ruby", "", None, "FR"):
         try:
-            build_key_flags(bad)
+            build_key_flags(F, bad)
             check(False, f"build_key_flags({bad!r}) should have raised")
         except ValueError:
             pass
@@ -763,7 +787,8 @@ def test_key_flags_read_back_the_way_the_extractor_reads_them():
     """The one end-to-end check that the bit order is right: hand the word to the
     profile's own Key System parser and see Normal / 1x / actual come back."""
     sb1 = bytearray(F["sb1_size"])
-    struct.pack_into("<H", sb1, F["sb1_key_flags"], build_key_flags("lg"))
+    word = build_key_flags(F, "lg")
+    sb1[F["sb1_key_flags"]:F["sb1_key_flags"] + len(word)] = word
     ks = frlgplus._parse_key_system(bytes(sb1), F)
     check(ks["difficulty"] == "Normal", f"difficulty {ks['difficulty']}")
     check(ks["exp_modifier"] == "1x", f"exp_modifier {ks['exp_modifier']}")
@@ -793,8 +818,11 @@ def test_the_carved_out_regions_are_zeroed():
         "sb1_filler_easy_chat": F["sb1_daycare"] - F["sb1_filler_easy_chat"],
         # masterTrainerFlags[20] is generated: unused_3A94 + 44 to registeredTexts.
         "sb1_master_trainer_flags": F["master_trainer_flags_bytes"],
-        # u8 masterTrainerTitle and u16 lastViewedPokedexEntry.
-        "sb1_master_trainer_title": 1,
+        # u8 masterTrainerTitle and u16 lastViewedPokedexEntry, each pinned against
+        # the distance to the generated offset of the field that follows it rather
+        # than against a literal of its own.
+        "sb1_master_trainer_title": (F["sb1_last_viewed_pokedex_entry"]
+                                     - F["sb1_master_trainer_title"]),
         "sb1_last_viewed_pokedex_entry": F["sb1_key_flags"] - F["sb1_last_viewed_pokedex_entry"],
     }
     check(sizes["sb1_nuzlocke_dupe_flags"] == 52,

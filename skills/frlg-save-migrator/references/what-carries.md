@@ -38,13 +38,18 @@ filler, and the vanilla item slots FRLG+ no longer uses.
 
 ## Cannot carry
 
-**Duplicate TM quantities.** The TM Case stores one bit per TM, so a stack of three
-TM05 becomes one. The plan lists every such loss before anything is written, and
-the verification step accounts for exactly these and nothing else.
+There are **five** kinds of loss, and the plan lists every one of them before
+anything is written. The verification step accounts for exactly these five and
+nothing else: a difference it cannot attribute to one of them is reported as a
+problem rather than excused.
 
-Key items have no quantity either: a key item held more than once is kept once (`key_item_quantity`). Three other things can be dropped, and each is listed in the plan too: an item that
-no longer fits its FRLG+ pocket (`pocket_full`), a key item FRLG+ has no index for
-(`unmapped_key_item`), and an item the tool does not recognise (`unknown_item`).
+- **Duplicate TM quantities** (`tm_quantity`). The TM Case stores one bit per TM, so a
+  stack of three TM05 becomes one.
+- **Duplicate key items** (`key_item_quantity`). Key Items stores one byte per item and
+  no quantity, so a key item held more than once is kept once.
+- **An item that no longer fits its FRLG+ pocket** (`pocket_full`).
+- **A key item FRLG+ has no index for** (`unmapped_key_item`).
+- **An item the tool does not recognise, or has no pocket for** (`unknown_item`).
 
 ## Residual risks the tool cannot fix
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import rules
 
-# The four ways a bag entry can fail to carry over, each with its own heading.
+# The five ways a bag entry can fail to carry over, each with its own heading.
 # They are different problems: only pocket_full is about capacity. unknown_item
 # means FRLG+ has no such item, or no pocket to put it in.
 LOSS_HEADINGS = {
@@ -38,7 +38,7 @@ def build_plan(src, vanilla_L, plus_L, tables, *, source_version):
         writes["sb1_route5_daycare_mon"] = mons["day_care"]["route_5"]
     id_writes, notes = rules.remap_ids(src["sb1"], vanilla_L, plus_L, src["remaps"])
     writes.update(id_writes)
-    writes["sb1_key_flags"] = rules.build_key_flags(source_version).to_bytes(2, "little")
+    writes["sb1_key_flags"] = rules.build_key_flags(plus_L, source_version)
     writes.update(rules.zeroed_regions(plus_L))
     return {"writes": writes, "mons": mons, "losses": losses, "skipped": skipped,
             "decisions": decisions, "notes": notes,

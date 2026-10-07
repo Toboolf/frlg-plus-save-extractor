@@ -275,17 +275,29 @@ def remap_ids(src_sb1, vanilla_L, plus_L, remaps):
 
 
 # ------------------------------------------------------------- rule 5: key flags
-def build_key_flags(source_version):
-    """struct KeySystemFlags: difficulty:2, version:1, nuzlocke:1, ivCalcMode:2,
-    evCalcMode:1, noPMC:1, expMod:2, padding:4, changedCalcMode:1, inKeySystemMenu:1.
+def build_key_flags(plus_L, source_version):
+    """struct KeySystemFlags, as the bytes to write: difficulty:2, version:1,
+    nuzlocke:1, ivCalcMode:2, evCalcMode:1, noPMC:1, expMod:2, padding:4,
+    changedCalcMode:1, inKeySystemMenu:1 — and then `u16 padding2`.
 
     Everything defaults to 0 except expMod, which new_game.c:157 sets to 2. A
     zero-filled word means expMod == 0, which battle_script_commands.c:3249 reads
     as no EXP, ever — a save where nothing ever levels.
+
+    The struct is FOUR bytes, not the two the bitfields occupy: padding2 is a second
+    u16 storage unit. The width comes from the generated layout (key_flags_bytes,
+    counted off the FRLG+ source and checked against trainerRematchStepCounter), so
+    all of it is written. Writing only the halfword would leave the rest holding
+    whatever the vanilla save had there, which is stale data inside a struct FRLG+
+    reads — the thing rule 6 exists to prevent.
     """
     if source_version not in ("fr", "lg"):
         raise ValueError(f"source_version must be 'fr' or 'lg', got {source_version!r}")
-    return (2 << 8) | ((1 if source_version == "lg" else 0) << 2)
+    width = plus_L["key_flags_bytes"]
+    if width < 2:
+        raise ValueError(f"struct KeySystemFlags cannot be {width} bytes")
+    word = (2 << 8) | ((1 if source_version == "lg" else 0) << 2)
+    return struct.pack("<H", word) + bytes(width - 2)
 
 
 # -------------------------------------------------- rule 6: zero the carved regions
