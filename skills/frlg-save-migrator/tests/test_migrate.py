@@ -512,12 +512,18 @@ def _day_care_fixture():
     V = TV.layout
     stride = V["daycare_mon_size"]
     four = bytearray(stride * V["daycare_mon_count"])
-    four[0:80] = fixtures.mon("Pikachu", 25, pid=0x0A0B0C0D, party=False)
-    four[stride:stride + 80] = fixtures.mon("Gyarados", 40, pid=0x1A2B3C4D, party=False)
+    # The three met locations are deliberately one of each kind the remap has to
+    # handle, so that a test asserting "metLocation was remapped" can actually fail:
+    # 51 MOVES (-> 207), 0xFE is a METLOC special that must pass through untouched,
+    # and 88 is a row that maps to itself. With all three at the default 88 the
+    # assertion held whether the remap ran or not.
+    four[0:80] = fixtures.mon("Pikachu", 25, pid=0x0A0B0C0D, party=False, met=0xFE)
+    four[stride:stride + 80] = fixtures.mon("Gyarados", 40, pid=0x1A2B3C4D, party=False,
+                                            met=88)
     return fixtures.build_vanilla_save(
         party=[fixtures.mon("Bulbasaur", 5)],
         daycare_step=137, daycare_offspring=0xBEEF, daycare_mons=bytes(four),
-        route5_daycare_mon=fixtures.mon("Abra", 16, pid=0x5E6F7A8B, party=False))
+        route5_daycare_mon=fixtures.mon("Abra", 16, pid=0x5E6F7A8B, party=False, met=51))
 
 
 def test_a_pokemon_in_either_day_care_gets_its_box_hp_written():
@@ -561,6 +567,7 @@ def test_the_day_care_pokemon_get_their_met_location_remapped():
     # The Four Island Day Care sits four bytes earlier in FRLG+, so the result is read
     # through the FRLG+ layout's own slot offsets, matched to the source by identity.
     plus_off = {ident: off for ident, _label, off in daycare_mon_slots(TF.layout)}
+    moved = 0
     for entry in src["day_care"]:
         was = entry["mon"]["origin"]["met_location_id"]
         want = remap.get(was, was)
@@ -568,6 +575,10 @@ def test_the_day_care_pokemon_get_their_met_location_remapped():
         after = gen3core.decrypt_substructures(f_sb1[off:off + 80])[0]["M"][1]
         check(after == want,
               f"{entry['where']}: metLocation {was} should remap to {want}, got {after}")
+        if want != was:
+            moved += 1
+    check(moved, "this fixture no longer contains a Day Care Pokemon whose met location "
+                 "the remap table MOVES, so the loop above cannot fail")
 
 
 def test_the_plan_mentions_a_pokemon_in_the_day_care():

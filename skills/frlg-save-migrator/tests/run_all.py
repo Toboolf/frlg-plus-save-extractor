@@ -6,7 +6,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULES = ["test_vanilla_read.py", "test_local_oracle.py", "test_no_personal_data.py",
-           "test_vendored_copies_match.py", "test_rules.py",
+           "test_vendored_copies_match.py", "test_gen3core_tables.py", "test_rules.py",
            "test_refusals.py", "test_migrate.py"]
 
 

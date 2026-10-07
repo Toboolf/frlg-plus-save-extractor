@@ -21,6 +21,7 @@ VENDORED=(
 "shared/tools/display_names.json tools/display_names.json"
 "shared/tests/test_no_personal_data.py tests/test_no_personal_data.py"
 "shared/tests/test_vendored_copies_match.py tests/test_vendored_copies_match.py"
+"shared/tests/test_gen3core_tables.py tests/test_gen3core_tables.py"
 )
 
 usage() {
