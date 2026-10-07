@@ -12,6 +12,7 @@ sys.path.insert(0, HERE)
 
 import fixtures  # noqa: E402
 import frlgplus  # noqa: E402
+import savewrite  # noqa: E402
 from gen3core import SECTOR_SIZE, SECTORS_PER_SLOT, Tables  # noqa: E402
 import vanilla_frlg  # noqa: E402
 from migrate import detect_source_version, looks_like_frlgplus  # noqa: E402
@@ -111,6 +112,53 @@ def test_it_refuses_a_source_whose_checksums_do_not_verify():
           f"the refusal should name checksums: {r.stderr[-300:]}")
 
 
+def _corrupt_inside_a_section_but_compensate_in_its_padding(raw, sid=4):
+    """Corruption the LENIENT matcher cannot see, in both slots.
+
+    gen3core._checksum_match accepts any 4-byte-aligned PREFIX whose running fold
+    matches the stored value, because a hack may use a different number of a
+    sector's bytes. So: add 1 to the last word the section really uses and subtract
+    1 from a word in the sector's padding beyond it. The strict checksum over
+    exactly section_sizes()[sid] bytes no longer reproduces, but the running fold
+    at the longer prefix does, so the reader still calls the slot valid.
+    """
+    import struct as _s
+    size = savewrite.section_sizes(TV.layout)[sid]
+    out = bytearray(raw)
+    for slot in range(2):
+        for phys in range(SECTORS_PER_SLOT):
+            base = (slot * SECTORS_PER_SLOT + phys) * SECTOR_SIZE
+            if _s.unpack_from("<H", out, base + 0xFF4)[0] != sid:
+                continue
+            for off, delta in ((size - 4, 1), (size, -1)):
+                w = _s.unpack_from("<I", out, base + off)[0]
+                _s.pack_into("<I", out, base + off, (w + delta) & 0xFFFFFFFF)
+    return bytes(out)
+
+
+def test_it_refuses_a_source_the_lenient_matcher_would_have_accepted():
+    """Spec 5.5 promises refusal when the SOURCE's checksums do not verify.
+
+    read_slot's matcher is deliberately lenient - right for a reader of an unknown
+    hack, wrong for a writer's input gate. A source corrupted this way was accepted,
+    converted, strictly re-checksummed on output and declared verified: the one
+    reading that is a false clean bill of health.
+    """
+    raw = _corrupt_inside_a_section_but_compensate_in_its_padding(
+        fixtures.build_vanilla_save(party=[fixtures.mon("Bulbasaur", 5)]))
+    v = read_vanilla(raw, TV)
+    check(v["slot"]["valid"],
+          "the fixture must be one the LENIENT matcher accepts, or it proves nothing")
+    strict = savewrite.verify_all_checksums(raw, savewrite.section_sizes(TV.layout))
+    check(strict, "the fixture must fail the STRICT matcher, or it proves nothing")
+    p = write_temp(raw)
+    r = run(p)
+    check(r.returncode != 0, "a source that fails the strict checksums should be refused")
+    check("checksum" in (r.stdout + r.stderr).lower(),
+          f"the refusal should name checksums: {(r.stdout + r.stderr)[-400:]}")
+    check("Traceback" not in r.stderr, f"leaked a traceback: {r.stderr[-300:]}")
+
+
 def test_it_refuses_a_file_that_is_not_a_save():
     p = write_temp(b"not a save" * 100)
     r = run(p)
@@ -156,6 +204,40 @@ def test_an_ambiguous_source_version_is_refused_not_guessed():
     check(r.returncode != 0, "apply should refuse without a version")
     check("--source-version" in (r.stdout + r.stderr),
           f"the refusal should name the flag: {r.stderr[-300:]}")
+
+
+def test_a_tied_version_vote_is_refused_not_broken_by_dict_order():
+    """Spec 5.4 refuses an ambiguous source version. max() over the vote counts
+    silently resolves a tie by insertion order, and the loser's consequences are a
+    wrong keyFlags.version and a wrong Deoxys forme, neither of them visible."""
+    raw = fixtures.build_vanilla_save(
+        party=[fixtures.mon("Bulbasaur", 5, game=4),
+               fixtures.mon("Charmander", 5, game=5)])
+    v = read_vanilla(raw, TV)
+    version, why = detect_source_version(v)
+    check(version is None, f"a 1-1 tie should not be resolved: got {version!r} ({why})")
+    check("fireRed" in why or "FireRed" in why,
+          f"the reason should name what tied: {why!r}")
+    p = write_temp(raw)
+    r = run(p, "--apply", "--out", os.path.join(os.path.dirname(p), "o.srm"))
+    check(r.returncode != 0, "apply should refuse an ambiguous version")
+    check("--source-version" in (r.stdout + r.stderr),
+          f"the refusal should name the flag: {r.stderr[-300:]}")
+    # And the override still works, so a tie is recoverable rather than a dead end.
+    r2 = run(p, "--apply", "--out", os.path.join(os.path.dirname(p), "o2.srm"),
+             "--source-version", "fr")
+    check(r2.returncode == 0, f"an explicit version should still convert: {r2.stderr[-300:]}")
+
+
+def test_a_clear_majority_is_still_inferred_over_a_stray_other_version():
+    """Refusing a TIE must not refuse an ordinary save that holds one traded-looking
+    own-OT Pokemon from the other game."""
+    raw = fixtures.build_vanilla_save(
+        party=[fixtures.mon("Bulbasaur", 5, game=4),
+               fixtures.mon("Charmander", 5, game=4),
+               fixtures.mon("Squirtle", 5, game=5)])
+    version, why = detect_source_version(read_vanilla(raw, TV))
+    check(version == "fr", f"2-1 for FireRed should infer fr: {version!r} ({why})")
 
 
 def test_the_version_is_inferred_from_the_players_own_pokemon():

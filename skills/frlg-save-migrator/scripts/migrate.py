@@ -43,7 +43,16 @@ def detect_source_version(src):
         votes[o["game"]] = votes.get(o["game"], 0) + 1
     if not votes:
         return None, "no Pokémon in this save was caught by this trainer"
-    best = max(votes, key=votes.get)
+    ranked = sorted(votes.items(), key=lambda kv: -kv[1])
+    # max() would break a tie by insertion order, which is not an inference. Spec 5.4
+    # refuses an ambiguous source instead: getting this wrong sets the wrong
+    # keyFlags.version and the wrong Deoxys forme, and neither shows up afterwards.
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        tied = ", ".join(f"{name} ({n})" for name, n in ranked
+                         if n == ranked[0][1])
+        return None, (f"this trainer's Pokémon are split evenly between {tied}, "
+                      f"so nothing here says which game wrote the save")
+    best = ranked[0][0]
     if best == "FireRed":
         return "fr", f"{votes[best]} of this trainer's Pokémon were met in FireRed"
     if best == "LeafGreen":
@@ -150,6 +159,18 @@ def main():
     if not src["slot"]["valid"]:
         sys.exit("No save slot passed its checksums, so nothing here can be trusted: "
                  + "; ".join(src["slot"]["problems"][:5]))
+    # read_slot's matcher accepts a checksum that matches ANY 4-byte-aligned prefix of
+    # a sector, because a hack may use a different number of its bytes. That is right
+    # for a reader of an unknown hack and wrong for a writer's input gate: it accepts
+    # corruption at a percent-level rate, and the conversion would then be strictly
+    # re-checksummed on output and declared verified. Spec 5.5 promises refusal when
+    # the SOURCE's checksums do not verify, so gate on the strict matcher too — the
+    # same one the written file is held to below.
+    bad_src = savewrite.verify_all_checksums(raw, savewrite.section_sizes(tv.layout))
+    if bad_src:
+        sys.exit(f"{args.save}'s own sector checksums do not reproduce, so it cannot "
+                 f"be converted safely: " + "; ".join(bad_src[:5])
+                 + ". Nothing was written.")
     if src["saved_game_stat"] != src["slot"]["counter"]:
         sys.exit(f"GAME_STAT_SAVED_GAME ({src['saved_game_stat']}) does not match the "
                  f"sector save counter ({src['slot']['counter']}), so this does not "

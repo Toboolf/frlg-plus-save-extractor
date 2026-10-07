@@ -269,9 +269,18 @@ def test_a_failed_verification_leaves_the_original_untouched_and_makes_no_backup
         argv += [a if a != "NEW" else os.path.join(d, "new.srm") for a in extra]
         out, err = io.StringIO(), io.StringIO()
         code = None
+        # The same function gates the SOURCE on the way in and the converted image on
+        # the way out. Only the second must fail here: a source that failed would be
+        # refused before anything was converted, which is a different refusal.
+        calls = {"n": 0}
+
+        def fail_after_the_input_gate(*_a, **_k):
+            calls["n"] += 1
+            return [] if calls["n"] == 1 else ["slot 0 sector 0 (section 1)"]
+
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(savewrite, "verify_all_checksums",
-                                  return_value=["slot 0 sector 0 (section 1)"]), \
+                                  side_effect=fail_after_the_input_gate), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 migrate.main()
