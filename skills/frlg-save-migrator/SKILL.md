@@ -14,10 +14,13 @@ this one produces a converted save. It is built so that nothing is written by ac
   `<save>.bak-<timestamp>` before overwriting it (an existing `--out` file is backed up too).
   `--apply --out NEW` to a new path leaves the source untouched and overwrites nothing, so it
   makes no backup; it is the safer way to run it.
-- **It verifies in two stages.** Sector checksums are checked on the converted image in memory
-  before anything is written. Agreement with the source (items conserved, money, coins,
-  flags, variables, game stats, Pokédex, play time, the Day Care step counter) is checked
-  after writing, on the file re-read from disk.
+- **It verifies in three stages.** The source's own sector checksums must reproduce strictly,
+  or it is refused before anything is converted. The converted image's checksums are then
+  checked in memory before anything is written, and every recognisable sector checksum is
+  re-checked on the written file. Finally, agreement with the source (items conserved, money,
+  coins, flags, variables, game stats, Pokédex, play time, mail, the Fame Checker, the Trainer
+  Tower, the quest log, the Day Care step counter, and all 429 Pokémon byte for byte outside
+  the two fields the conversion writes) is checked on the file re-read from disk.
 - **If verification fails, the written file is still on disk. Do not load it; discard it.**
   The tool exits with an error naming the check. After an in-place run, restore from the
   backup it names; after `--out`, the source was never touched.

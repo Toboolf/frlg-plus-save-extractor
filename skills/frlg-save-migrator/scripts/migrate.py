@@ -248,8 +248,10 @@ def main():
                     else "The source file was not touched.")
         sys.exit(f"{target} was written but does not agree with its source, so do not "
                  f"use it. {recovery}")
-    print("Verified against the source: items conserved, money, coins, flags, vars, "
-          "stats, Pokédex, play time and Day Care step counter all agree.")
+    print("Verified against the source: every Pokémon byte for byte outside its boxed "
+          "HP/status halfword and met location, items conserved, and money, coins, "
+          "flags, vars, stats, Pokédex, play time, mail, the Fame Checker, the "
+          "Trainer Tower, the quest log and the Day Care step counter all agree.")
 
 
 if __name__ == "__main__":

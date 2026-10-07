@@ -16,7 +16,7 @@ copied byte for byte.
 | Player name, gender, trainer and secret IDs, options, encryption key | SaveBlock2 is untouched. |
 | Money and coins | Stored XOR the encryption key; the key is unchanged, so the bytes are too. |
 | PC item storage | 30 slots, quantity stored raw in both games. |
-| Mail, the Fame Checker, the Trainer Tower | None of the three is a field in the generated layout, so no conversion rule can address those offsets; they stay as copied. (This is by construction, not the result of a byte-level comparison.) |
+| Mail, the Fame Checker, the Trainer Tower | No conversion rule addresses those offsets, so they stay as copied — and all three are now compared byte for byte afterwards as well, as drift detectors. |
 | Everything about each Pokémon except its padding halfword and its met location | See below. |
 
 ## Converted
@@ -69,8 +69,14 @@ that is also true of a vanilla bag read through the wrong layout. It checks that
 the total of every item id and quantity is the same before and after (less the
 losses above), that the Day Care step counter reads the same under each layout's own
 offset. It also compares these regions byte for byte between source and result:
-flags, script variables, game stats, PC item storage, the Pokédex and play time
-(`UNTOUCHED` in `verify.py`), plus money, coins and the encryption key.
+flags, script variables, game stats, PC item storage, the Pokédex, play time, mail,
+both Pokédex `seen` arrays, the Fame Checker and the Trainer Tower (`UNTOUCHED` in
+`verify.py`), plus money, coins and the encryption key. One of those is not merely a
+drift detector: `seen1` begins exactly where the rewritten item block ends, so a
+pocket write one slot too long would eat Pokédex seen flags and change nothing else.
+The whole quest-log region is compared too, with only the two map bytes per scene
+that the ID remap rewrites masked out — that is what covers each recorded scene's
+flag and variable snapshots, which are not fields of their own.
 
 It then compares **all 429 Pokémon**, one physical slot at a time, source against
 result: the header (less the substructure checksum, which has to be recomputed), the
@@ -82,10 +88,10 @@ recomputes the sector checksum over whatever bytes it was handed, so a wrong
 substructure order or a wrong offset inside one would otherwise yield a file where
 every checksum reproduces, items are conserved and every untouched region matches.
 
-The rest of the "carries" table is **carried by construction and not re-checked**: player
-name, gender, trainer and secret IDs, options, mail, the Fame Checker and the Trainer
-Tower. Those blocks are never rewritten, so there is nothing for a conversion to
-change, but nothing compares them afterwards either.
+The rest of the "carries" table is **carried by construction and not re-checked**:
+player name, gender, trainer and secret IDs, and options. SaveBlock2 is never
+rewritten, so there is nothing for a conversion to change, but nothing compares those
+fields afterwards either.
 
 If a check fails the tool exits non-zero and names it, **and the file it wrote is left on
 disk**. Do not load it; delete it. What is left to go back to depends on how you ran it:

@@ -28,8 +28,16 @@ from vanilla_read import box_mon_slots
 
 # Fields the specification says must carry unchanged: (key, how to size it).
 # The two sb2 fields are read from SaveBlock2; the rest from SaveBlock1.
+#
+# The last five are spec 5.3's remaining do-not-touch regions. Four of them are
+# trivially true today - no conversion rule addresses those offsets - and are here as
+# drift detectors. `sb1_seen1` is NOT trivially true: it begins at
+# `sb1_item_block_end`, so a pocket buffer one slot too long overruns straight into
+# the Pokédex seen flags, changes nothing else, and still reproduces every checksum.
 UNTOUCHED = ("sb1_flags", "sb1_vars", "sb1_game_stats", "sb1_pc_items",
-             "sb2_pokedex", "sb2_play_time_hours")
+             "sb2_pokedex", "sb2_play_time_hours",
+             "sb1_mail", "sb1_seen1", "sb1_seen2", "sb1_fame_checker",
+             "sb1_trainer_tower")
 
 
 def _region(L, key):
@@ -45,6 +53,13 @@ def _region(L, key):
         "sb2_pokedex": L["sb2_dex_seen"] + L["dex_flag_bytes"] - L["sb2_pokedex"],
         # hours (u16), minutes, seconds: the three fields are contiguous, 0xE-0x11.
         "sb2_play_time_hours": L["sb2_play_time_seconds"] + 1 - L["sb2_play_time_hours"],
+        # Each of these five has its length generated beside its offset, cross-checked
+        # against an independently-sourced value in tools/generate_tables.py.
+        "sb1_mail": L["mail_bytes"],
+        "sb1_seen1": L["seen1_bytes"],
+        "sb1_seen2": L["seen2_bytes"],
+        "sb1_fame_checker": L["fame_checker_bytes"],
+        "sb1_trainer_tower": L["trainer_tower_bytes"],
     }
     return L[key], sizes[key]
 
@@ -184,6 +199,38 @@ def item_multiset_frlgplus(raw, plus_L, tf):
     return out
 
 
+def compare_quest_log(src_sb1, out_sb1, vanilla_L, plus_L):
+    """The quest-log region, with only the bytes remap_ids may rewrite masked out.
+
+    rules.remap_ids copies all `quest_log_scene_count` scenes out and writes them
+    back, changing just the two map bytes of each. Everything else in there -
+    `startType`, the warp, the saved object events and templates, the recorded
+    script, and above all each scene's `flags[NUM_FLAG_BYTES]` and `vars[VARS_COUNT]`
+    snapshots - must come across untouched, so the whole region is compared with
+    exactly those two bytes per scene masked. Nothing else compares the snapshots:
+    they are not fields of their own in the layout, only bytes inside a region the
+    conversion rewrites wholesale.
+    """
+    stride, count = vanilla_L["quest_log_scene_size"], vanilla_L["quest_log_scene_count"]
+    if (stride, count) != (plus_L["quest_log_scene_size"],
+                           plus_L["quest_log_scene_count"]):
+        return ["the quest log is a different shape in the two layouts"]
+    before = bytearray(src_sb1[vanilla_L["sb1_quest_log"]:
+                               vanilla_L["sb1_quest_log"] + stride * count])
+    after = bytearray(out_sb1[plus_L["sb1_quest_log"]:
+                              plus_L["sb1_quest_log"] + stride * count])
+    for i in range(count):
+        before[stride * i + 1:stride * i + 3] = b"\0\0"
+        after[stride * i + 1:stride * i + 3] = b"\0\0"
+    if before != after:
+        scenes = [i for i in range(count)
+                  if before[stride * i:stride * (i + 1)] != after[stride * i:stride * (i + 1)]]
+        return [f"the quest log changed outside the map bytes remap_ids rewrites "
+                f"(scene{'s' if len(scenes) != 1 else ''} "
+                f"{', '.join(str(i + 1) for i in scenes)})"]
+    return []
+
+
 def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
     # `tv` is reserved: unused today, kept so the signature stays as specified.
     """Every way the result disagrees with the source. Empty means it checks out.
@@ -234,6 +281,7 @@ def verify_conversion(src, out_raw, vanilla_L, plus_L, tv, tf, losses=()):
 
     problems += compare_every_pokemon(src, sb1, read_frlgplus_pc(out_raw),
                                       vanilla_L, plus_L)
+    problems += compare_quest_log(src["sb1"], sb1, vanilla_L, plus_L)
 
     step_src = src["sb1"][vanilla_L["sb1_daycare_step_counter"]]
     step_out = sb1[plus_L["sb1_daycare_step_counter"]]

@@ -22,6 +22,7 @@ import fixtures  # noqa: E402
 import frlgplus  # noqa: E402
 import migrate  # noqa: E402
 import plan as planmod  # noqa: E402
+import rules  # noqa: E402
 import savewrite  # noqa: E402
 import vanilla_frlg  # noqa: E402
 import verify  # noqa: E402
@@ -802,6 +803,22 @@ def test_verify_flags_each_way_a_result_can_disagree():
                       "sb2_play_time_hours"),
         "an item (a pocket emptied)": (poke(out, "sb1", L["sb1_bag_poke_balls"], 0),
                                        "not conserved"),
+        # Spec 5.3's remaining do-not-touch regions. seen1 is the one that is not
+        # trivially true: it begins at sb1_item_block_end, so a one-slot overrun in
+        # any pocket write lands in it.
+        "seen1": (poke(out, "sb1", L["sb1_seen1"], 1), "sb1_seen1"),
+        "seen2": (poke(out, "sb1", L["sb1_seen2"] + 7, 1), "sb1_seen2"),
+        "mail": (poke(out, "sb1", L["sb1_mail"] + 11, 1), "sb1_mail"),
+        "the Fame Checker": (poke(out, "sb1", L["sb1_fame_checker"] + 3, 1),
+                             "sb1_fame_checker"),
+        "the Trainer Tower": (poke(out, "sb1", L["sb1_trainer_tower"] + 5, 1),
+                              "sb1_trainer_tower"),
+        # Inside quest-log scene 0's flag snapshot, which lives in a region remap_ids
+        # rewrites wholesale.
+        "a quest-log flag snapshot": (
+            poke(out, "sb1", L["sb1_quest_log"] + 0x148, 1), "quest log"),
+        "a quest-log var snapshot": (
+            poke(out, "sb1", L["sb1_quest_log"] + 0x2C8, 1), "quest log"),
     }
     for name, (img, needle) in cases.items():
         got = problems_for(img)
@@ -849,6 +866,72 @@ def test_the_untouched_list_is_all_actually_compared():
         for L in (TV.layout, TF.layout):
             off, size = verify._region(L, name)
             check(size > 0 and off >= 0, f"{name} has no real size in a layout")
+
+
+def test_the_untouched_list_names_every_region_spec_5_3_protects():
+    """Spec 5.3's do-not-touch list, in full. Mail, both `seen` arrays, the Fame
+    Checker and the Trainer Tower were not compared anywhere; seen1 is the one that
+    is not trivially true, since it starts exactly where the rewritten item block
+    ends."""
+    for name in ("sb1_mail", "sb1_seen1", "sb1_seen2", "sb1_fame_checker",
+                 "sb1_trainer_tower"):
+        check(name in verify.UNTOUCHED, f"{name} is not in UNTOUCHED")
+    check(TF.layout["sb1_seen1"] == TF.layout["sb1_item_block_end"],
+          "seen1 no longer abuts the item block; the overrun hazard has moved")
+
+
+def test_a_one_slot_overrun_in_a_pocket_write_is_caught():
+    """The concrete hazard: the migrator rewrites the whole item block, and `seen1`
+    (Pokedex seen flags) begins at its end. Four bytes too many at the end of that
+    block eat the first seen flags, change nothing else, and still reproduce every
+    checksum.
+
+    The overrun is injected into the zero-fill that finishes the block, because that
+    is the write which actually abuts `seen1`: the pockets ahead of it are themselves
+    overwritten by it, so only the last write in the block can reach past the end.
+    """
+    raw = fixtures.build_vanilla_save(items=[(item("Potion"), 4)])
+    src = read_vanilla(raw, TV)
+
+    real = rules.zeroed_regions
+
+    def one_slot_too_long(plus_L):
+        writes = real(plus_L)
+        writes["__leftover_item_slots"] += b"\x01\x00\x01\x00"
+        return writes
+
+    with mock.patch.object(rules, "zeroed_regions", one_slot_too_long):
+        p = planmod.build_plan(src, TV.layout, TF.layout, TF, source_version="fr")
+        sb1, pc = migrate.assemble_blocks(p, src, TF, TV.layout)
+    out = savewrite.apply_writes(raw, src["slot"], TF.layout, sb1, pc)
+    check(savewrite.verify_all_checksums(out, savewrite.section_sizes(TF.layout)) == [],
+          "the overrun must still reproduce every sector checksum")
+    problems = verify_conversion(src, out, TV.layout, TF.layout, TV, TF,
+                                 losses=p["losses"])
+    check(any("sb1_seen1" in x for x in problems),
+          f"an overrun into the Pokedex seen flags was not reported: {problems}")
+
+
+def test_the_quest_log_region_is_compared_with_only_the_remapped_bytes_masked():
+    """remap_ids copies all four scenes out and writes them back, changing two bytes
+    per scene. Everything else in that region - each scene's flag and var snapshots
+    above all - must come across untouched, so the whole region is compared with
+    exactly those two bytes per scene masked."""
+    remapped = (1, 72)           # CeruleanCave_1F, which FRLG+ renumbers to (1, 75)
+    raw = fixtures.build_vanilla_save(quest_log=[remapped, (0, 0), (0, 0), (0, 0)])
+    src = read_vanilla(raw, TV)
+    out = _convert_to_bytes(raw)
+    problems = verify_conversion(src, out, TV.layout, TF.layout, TV, TF)
+    check(problems == [], f"a clean conversion should verify: {problems}")
+    # The masked bytes really did change, so the pass above is the mask working
+    # rather than nothing having moved.
+    base = TF.layout["sb1_quest_log"]
+    f_sb1 = read_frlgplus_sb1(out)
+    check((f_sb1[base + 1], f_sb1[base + 2]) == (1, 75),
+          f"scene 0's map should have been remapped: "
+          f"{(f_sb1[base + 1], f_sb1[base + 2])}")
+    check(f_sb1[base + 3:base + 0x668] == src["sb1"][base + 3:base + 0x668],
+          "the rest of scene 0 should be byte-identical")
 
 
 def test_migrate_exits_nonzero_and_names_the_problem_when_verification_fails():

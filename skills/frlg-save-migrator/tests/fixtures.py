@@ -68,7 +68,7 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
                        player="ASH", map_group=3, map_num=0, layout_id=1,
                        warp_id=7, warp_x=13, warp_y=21,
                        daycare_step=0, daycare_offspring=0, daycare_mons=b"",
-                       route5_daycare_mon=b"", one_slot_only=False):
+                       route5_daycare_mon=b"", quest_log=(), one_slot_only=False):
     """A 128 KB vanilla save. Pocket arguments are lists of (item id, quantity)."""
     sb1 = bytearray(L["sb1_size"])
     sb2 = bytearray(L["sb2_size"])
@@ -104,6 +104,16 @@ def build_vanilla_save(*, save_counter=3, money=3000, coins=0, party=(), boxes=N
     # 80-byte box form at offset 0 of it.
     sb1[L["sb1_route5_daycare_mon"]:
         L["sb1_route5_daycare_mon"] + len(route5_daycare_mon)] = route5_daycare_mon
+
+    # Recorded quest-log scenes: (map group, map num) per scene, with the rest of each
+    # scene filled with a pattern. Only the two map bytes are remapped, so everything
+    # else in the region - including each scene's flag and var snapshots - has to come
+    # across untouched, and a pattern is what makes that observable.
+    stride = L["quest_log_scene_size"]
+    for i, (group, num) in enumerate(quest_log):
+        base = L["sb1_quest_log"] + stride * i
+        sb1[base:base + stride] = bytes((j * 31 + i * 7) % 251 + 1 for j in range(stride))
+        sb1[base + 1], sb1[base + 2] = group & 0xFF, num & 0xFF
 
     sb1[L["sb1_party_count"]] = len(party)
     for i, m in enumerate(party):
